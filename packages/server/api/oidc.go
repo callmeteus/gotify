@@ -1,0 +1,607 @@
+package api
+
+import (
+	"context"
+	"crypto/rand"
+	"encoding/hex"
+	"errors"
+	"fmt"
+	"io"
+	"log/slog"
+	"net/http"
+	"net/url"
+	"slices"
+	"strings"
+	"time"
+
+	"github.com/gin-gonic/gin"
+	"github.com/gotify/server/v3/auth"
+	"github.com/gotify/server/v3/config"
+	"github.com/gotify/server/v3/database"
+	"github.com/gotify/server/v3/decaymap"
+	"github.com/gotify/server/v3/model"
+	"github.com/rs/zerolog"
+	"github.com/rs/zerolog/log"
+	"github.com/zitadel/oidc/v3/pkg/client/rp"
+	httphelper "github.com/zitadel/oidc/v3/pkg/http"
+	"github.com/zitadel/oidc/v3/pkg/oidc"
+)
+
+func NewOIDC(conf *config.Configuration, db *database.GormDatabase, userChangeNotifier *UserChangeNotifier) *OIDCAPI {
+	cookieKey := make([]byte, 32)
+	if _, err := rand.Read(cookieKey); err != nil {
+		log.Fatal().Err(err).Msg("failed to generate OIDC cookie key")
+	}
+	cookieHandlerOpt := []httphelper.CookieHandlerOpt{}
+	if !conf.Server.SecureCookie {
+		cookieHandlerOpt = append(cookieHandlerOpt, httphelper.WithUnsecure())
+	}
+	cookieHandler := httphelper.NewCookieHandler(cookieKey, cookieKey, cookieHandlerOpt...)
+
+	opts := []rp.Option{
+		rp.WithCookieHandler(cookieHandler),
+		rp.WithPKCE(cookieHandler),
+		rp.WithSigningAlgsFromDiscovery(),
+		rp.WithLogger(slog.New(zerolog.NewSlogHandler(log.Logger))),
+	}
+
+	provider, err := rp.NewRelyingPartyOIDC(
+		context.Background(),
+		conf.OIDC.Issuer,
+		conf.OIDC.ClientID,
+		conf.OIDC.ClientSecret,
+		conf.OIDC.RedirectURL,
+		conf.OIDC.Scopes,
+		opts...,
+	)
+	if err != nil {
+		log.Fatal().Err(err).Msg("failed to initialize OIDC provider")
+	}
+
+	return &OIDCAPI{
+		DB:                 db,
+		Provider:           provider,
+		UserChangeNotifier: userChangeNotifier,
+		UsernameClaim:      conf.OIDC.UsernameClaim,
+		GroupsClaim:        conf.OIDC.GroupsClaim,
+		GroupsUser:         conf.OIDC.GroupsUser,
+		GroupsAdmin:        conf.OIDC.GroupsAdmin,
+		PasswordStrength:   conf.PassStrength,
+		SecureCookie:       conf.Server.SecureCookie,
+		AutoRegister:       conf.OIDC.AutoRegister,
+		LinkByUsername:     conf.OIDC.LinkByUsername,
+		Prompt:             conf.OIDC.Prompt,
+		pendingSessions:    decaymap.NewDecayMap[string, *pendingOIDCSession](time.Now(), pendingSessionMaxAge),
+	}
+}
+
+const pendingSessionMaxAge = 10 * time.Minute
+
+type pendingOIDCSession struct {
+	RedirectURI string
+	ClientName  string
+	CreatedAt   time.Time
+	Elevate     *pendingElevation
+}
+
+type pendingElevation struct {
+	ClientID        uint `form:"id" binding:"required"`
+	DurationSeconds int  `form:"durationSeconds" binding:"required"`
+}
+
+// OIDCAPI provides handlers for OIDC authentication.
+type OIDCAPI struct {
+	DB                 *database.GormDatabase
+	Provider           rp.RelyingParty
+	UserChangeNotifier *UserChangeNotifier
+	UsernameClaim      string
+	GroupsClaim        string
+	GroupsUser         []string
+	GroupsAdmin        []string
+	PasswordStrength   int
+	SecureCookie       bool
+	AutoRegister       bool
+	LinkByUsername     bool
+	Prompt             []string
+	pendingSessions    *decaymap.DecayMap[string, *pendingOIDCSession]
+}
+
+// swagger:operation GET /auth/oidc/login oidc oidcLogin
+//
+// Start the OIDC login flow (browser).
+//
+// Redirects the user to the OIDC provider's authorization endpoint.
+// After authentication, the provider redirects back to the callback endpoint.
+//
+//	---
+//	parameters:
+//	- name: name
+//	  in: query
+//	  description: the client name to create after login
+//	  required: true
+//	  type: string
+//	responses:
+//	  302:
+//	    description: Redirect to OIDC provider
+//	  default:
+//	    description: Error
+//	    schema:
+//	        $ref: "#/definitions/Error"
+func (a *OIDCAPI) LoginHandler() gin.HandlerFunc {
+	return gin.WrapF(func(w http.ResponseWriter, r *http.Request) {
+		clientName := r.URL.Query().Get("name")
+		if clientName == "" {
+			http.Error(w, "invalid client name", http.StatusBadRequest)
+			return
+		}
+		state, err := a.generateState()
+		if err != nil {
+			http.Error(w, fmt.Sprintf("failed to generate state: %v", err), http.StatusInternalServerError)
+			return
+		}
+		a.pendingSessions.Set(time.Now(), state, &pendingOIDCSession{ClientName: clientName, CreatedAt: time.Now()})
+		rp.AuthURLHandler(func() string { return state }, a.Provider, a.promptURLParams()...)(w, r)
+	})
+}
+
+// swagger:operation GET /auth/oidc/elevate oidc oidcElevate
+//
+// Start the OIDC flow to elevate an existing client session (browser).
+//
+// Redirects the user to the OIDC provider's authorization endpoint. After
+// successful authentication, the referenced client session is elevated for
+// the requested duration.
+//
+//	---
+//	parameters:
+//	- name: id
+//	  in: query
+//	  description: the client id to elevate
+//	  required: true
+//	  type: integer
+//	  format: int64
+//	- name: durationSeconds
+//	  in: query
+//	  description: how long the elevation should last, in seconds
+//	  required: true
+//	  type: integer
+//	responses:
+//	  302:
+//	    description: Redirect to OIDC provider
+//	  default:
+//	    description: Error
+//	    schema:
+//	        $ref: "#/definitions/Error"
+func (a *OIDCAPI) ElevateHandler(ctx *gin.Context) {
+	var elevate pendingElevation
+	if err := ctx.BindQuery(&elevate); err != nil {
+		return
+	}
+	state, err := a.generateState()
+	if err != nil {
+		ctx.AbortWithError(http.StatusInternalServerError, err)
+		return
+	}
+	a.pendingSessions.Set(time.Now(), state, &pendingOIDCSession{CreatedAt: time.Now(), Elevate: &elevate})
+	rp.AuthURLHandler(func() string { return state }, a.Provider, a.promptURLParams()...)(ctx.Writer, ctx.Request)
+}
+
+func (a *OIDCAPI) promptURLParams() []rp.URLParamOpt {
+	if len(a.Prompt) == 0 {
+		return nil
+	}
+	return []rp.URLParamOpt{rp.WithPromptURLParam(a.Prompt...)}
+}
+
+// swagger:operation GET /auth/oidc/callback oidc oidcCallback
+//
+// Handle the OIDC provider callback (browser).
+//
+// Exchanges the authorization code for tokens, resolves the user,
+// creates a gotify client, sets a session cookie, and redirects to the UI.
+//
+//	---
+//	parameters:
+//	- name: code
+//	  in: query
+//	  description: the authorization code from the OIDC provider
+//	  required: true
+//	  type: string
+//	- name: state
+//	  in: query
+//	  description: the state parameter for CSRF protection
+//	  required: true
+//	  type: string
+//	responses:
+//	  200:
+//	    description: ok
+//	  307:
+//	    description: Redirect to UI
+//	  default:
+//	    description: Error
+//	    schema:
+//	        $ref: "#/definitions/Error"
+func (a *OIDCAPI) CallbackHandler() gin.HandlerFunc {
+	callback := func(w http.ResponseWriter, r *http.Request, tokens *oidc.Tokens[*oidc.IDTokenClaims], state string, provider rp.RelyingParty, info *oidc.UserInfo) {
+		user, status, err := a.resolveUser(tokens.IDTokenClaims, info)
+		if err != nil {
+			http.Error(w, err.Error(), status)
+			return
+		}
+		session, ok := a.popPendingSession(state)
+		if !ok {
+			http.Error(w, "unknown or expired state", http.StatusBadRequest)
+			return
+		}
+
+		if session.Elevate != nil {
+			a.handleElevationCallback(w, session.Elevate, user)
+			return
+		}
+
+		client, err := a.createClient(session.ClientName, user.ID)
+		if err != nil {
+			http.Error(w, fmt.Sprintf("failed to create client: %v", err), http.StatusInternalServerError)
+			return
+		}
+		auth.SetCookie(w, client.Token, auth.CookieMaxAge, a.SecureCookie)
+		// A reverse proxy may have already stripped a url prefix from the URL
+		// without us knowing, we have to make a relative redirect.
+		// We cannot use http.Redirect as this normalizes the Path with r.URL.
+		w.Header().Set("Location", "../../")
+		w.WriteHeader(http.StatusTemporaryRedirect)
+	}
+	return gin.WrapF(rp.CodeExchangeHandler(rp.UserinfoCallback(callback), a.Provider))
+}
+
+func (a *OIDCAPI) handleElevationCallback(w http.ResponseWriter, elevate *pendingElevation, user *model.User) {
+	client, err := a.DB.GetClientByID(elevate.ClientID)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("database error: %v", err), http.StatusInternalServerError)
+		return
+	}
+	if client == nil || client.UserID != user.ID {
+		http.Error(w, "client not found", http.StatusNotFound)
+		return
+	}
+	elevatedUntil := model.ElevationTime(time.Now(), elevate.DurationSeconds)
+	if err := a.DB.UpdateClientElevatedUntil(client.ID, &elevatedUntil); err != nil {
+		http.Error(w, fmt.Sprintf("failed to elevate session: %v", err), http.StatusInternalServerError)
+		return
+	}
+
+	// The UI rechecks the authentication when the tab is closed.
+	w.WriteHeader(http.StatusOK)
+	w.Header().Add("content-type", "text/html")
+	io.WriteString(w, `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <title>Gotify Session Elevation</title>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+</head>
+<body>
+  <h1 style="text-align:center">Gotify session elevation successful. Close this tab to continue.</h1>
+  <script>window.close();</script>
+</body>
+</html>`)
+}
+
+// swagger:operation POST /auth/oidc/external/authorize oidc externalAuthorize
+//
+// Initiate the OIDC authorization flow for a native app.
+//
+// The app generates a PKCE code_verifier and code_challenge, then calls this
+// endpoint. The server forwards the code_challenge to the OIDC provider and
+// returns the authorization URL for the app to open in a browser.
+//
+//	---
+//	consumes: [application/json]
+//	produces: [application/json]
+//	parameters:
+//	- name: body
+//	  in: body
+//	  required: true
+//	  schema:
+//	    $ref: "#/definitions/OIDCExternalAuthorizeRequest"
+//	responses:
+//	  200:
+//	    description: Ok
+//	    schema:
+//	        $ref: "#/definitions/OIDCExternalAuthorizeResponse"
+//	  default:
+//	    description: Error
+//	    schema:
+//	        $ref: "#/definitions/Error"
+func (a *OIDCAPI) ExternalAuthorizeHandler(ctx *gin.Context) {
+	var req model.OIDCExternalAuthorizeRequest
+	if err := ctx.ShouldBindJSON(&req); err != nil {
+		ctx.AbortWithError(http.StatusBadRequest, err)
+		return
+	}
+	state, err := a.generateState()
+	if err != nil {
+		ctx.AbortWithError(http.StatusInternalServerError, err)
+		return
+	}
+	a.pendingSessions.Set(time.Now(), state, &pendingOIDCSession{
+		RedirectURI: req.RedirectURI, ClientName: req.Name, CreatedAt: time.Now(),
+	})
+	authOpts := []rp.AuthURLOpt{
+		rp.AuthURLOpt(rp.WithURLParam("redirect_uri", req.RedirectURI)),
+		rp.WithCodeChallenge(req.CodeChallenge),
+	}
+	for _, opt := range a.promptURLParams() {
+		authOpts = append(authOpts, rp.AuthURLOpt(opt))
+	}
+	ctx.JSON(http.StatusOK, &model.OIDCExternalAuthorizeResponse{
+		AuthorizeURL: rp.AuthURL(state, a.Provider, authOpts...),
+		State:        state,
+	})
+}
+
+// swagger:operation POST /auth/oidc/external/token oidc externalToken
+//
+// Exchange an authorization code for a gotify client token.
+//
+// After the user authenticates with the OIDC provider and the app receives
+// the authorization code via redirect, the app calls this endpoint with the
+// code and PKCE code_verifier. The server exchanges the code with the OIDC
+// provider and returns a gotify client token.
+//
+//	---
+//	consumes: [application/json]
+//	produces: [application/json]
+//	parameters:
+//	- name: body
+//	  in: body
+//	  required: true
+//	  schema:
+//	    $ref: "#/definitions/OIDCExternalTokenRequest"
+//	responses:
+//	  200:
+//	    description: Ok
+//	    schema:
+//	        $ref: "#/definitions/OIDCExternalTokenResponse"
+//	  default:
+//	    description: Error
+//	    schema:
+//	        $ref: "#/definitions/Error"
+func (a *OIDCAPI) ExternalTokenHandler(ctx *gin.Context) {
+	var req model.OIDCExternalTokenRequest
+	if err := ctx.ShouldBindJSON(&req); err != nil {
+		ctx.AbortWithError(http.StatusBadRequest, err)
+		return
+	}
+	session, ok := a.popPendingSession(req.State)
+	if !ok {
+		ctx.AbortWithError(http.StatusBadRequest, errors.New("unknown or expired state"))
+		return
+	}
+	exchangeOpts := []rp.CodeExchangeOpt{
+		rp.CodeExchangeOpt(rp.WithURLParam("redirect_uri", session.RedirectURI)),
+		rp.WithCodeVerifier(req.CodeVerifier),
+	}
+	tokens, err := rp.CodeExchange[*oidc.IDTokenClaims](ctx.Request.Context(), req.Code, a.Provider, exchangeOpts...)
+	if err != nil {
+		ctx.AbortWithError(http.StatusUnauthorized, fmt.Errorf("token exchange failed: %w", err))
+		return
+	}
+	info, err := rp.Userinfo[*oidc.UserInfo](ctx.Request.Context(), tokens.AccessToken, tokens.TokenType, tokens.IDTokenClaims.GetSubject(), a.Provider)
+	if err != nil {
+		ctx.AbortWithError(http.StatusInternalServerError, fmt.Errorf("failed to get user info: %w", err))
+		return
+	}
+	user, status, resolveErr := a.resolveUser(tokens.IDTokenClaims, info)
+	if resolveErr != nil {
+		ctx.AbortWithError(status, resolveErr)
+		return
+	}
+	client, err := a.createClient(session.ClientName, user.ID)
+	if err != nil {
+		ctx.AbortWithError(http.StatusInternalServerError, err)
+		return
+	}
+	ctx.JSON(http.StatusOK, &model.OIDCExternalTokenResponse{
+		Token: client.Token,
+		User:  &model.UserExternal{ID: user.ID, Name: user.Name, Admin: user.Admin},
+	})
+}
+
+func (a *OIDCAPI) generateState() (string, error) {
+	nonce := make([]byte, 20)
+	if _, err := rand.Read(nonce); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(nonce), nil
+}
+
+// resolveUser looks up, links, or creates the user bound to an OIDC identity.
+//
+//  1. Look up the user by OIDC id (<iss>#<sub>). If found, use it.
+//  2. Otherwise look up a user by the username claim. If one exists, link it to
+//     this OIDC identity, which requires GOTIFY_OIDC_LINK_BY_USERNAME and
+//     that the user is not already bound to a different identity.
+//  3. Otherwise auto-register a new user, which requires GOTIFY_OIDC_AUTOREGISTER.
+func (a *OIDCAPI) resolveUser(idToken *oidc.IDTokenClaims, info *oidc.UserInfo) (*model.User, int, error) {
+	issuer := idToken.GetIssuer()
+	if issuer == "" {
+		return nil, http.StatusInternalServerError, errors.New("issuer claim was empty")
+	}
+	if _, err := url.Parse(issuer); err != nil {
+		return nil, http.StatusInternalServerError, fmt.Errorf("issuer url %q is not a valid url: %w", issuer, err)
+	}
+	if strings.Contains(issuer, "#") {
+		return nil, http.StatusInternalServerError, fmt.Errorf("issuer url %q may not contain a fragment", issuer)
+	}
+	subject := info.GetSubject()
+	if subject == "" {
+		return nil, http.StatusInternalServerError, errors.New("subject claim was empty")
+	}
+	oidcID := issuer + "#" + subject
+
+	user, err := a.DB.GetUserByOIDC(oidcID)
+	if err != nil {
+		return nil, http.StatusInternalServerError, fmt.Errorf("database error: %w", err)
+	}
+
+	hasAdminGroup, status, err := a.resolvePermission(idToken.Claims, info.Claims)
+	if err != nil {
+		log.Err(err).Str("oidc_id", oidcID).Interface("idTokenClaims", idToken.Claims).Interface("userinfoClaims", info.Claims).Msg("OIDC: resolve permission")
+		return nil, status, err
+	}
+
+	if user != nil {
+		if len(a.GroupsAdmin) > 0 && user.Admin != hasAdminGroup {
+			user.Admin = hasAdminGroup
+			if err := a.DB.UpdateUser(user); err != nil {
+				return nil, http.StatusInternalServerError, fmt.Errorf("database error: %w", err)
+			}
+			log.Warn().Str("oidc_id", oidcID).Str("username", user.Name).Bool("admin", user.Admin).Msg("OIDC change permission")
+		}
+		return user, 0, nil
+	}
+
+	usernameRaw, ok := lookupClaim(a.UsernameClaim, idToken.Claims, info.Claims)
+	if !ok {
+		return nil, http.StatusInternalServerError, fmt.Errorf("username claim %q is missing", a.UsernameClaim)
+	}
+	username := fmt.Sprint(usernameRaw)
+	if username == "" || usernameRaw == nil {
+		return nil, http.StatusInternalServerError, errors.New("username claim was empty")
+	}
+
+	byUsername, err := a.DB.GetUserByName(username)
+	if err != nil {
+		return nil, http.StatusInternalServerError, fmt.Errorf("database error: %w", err)
+	}
+	if byUsername != nil {
+		return a.linkExistingUser(byUsername, oidcID, hasAdminGroup)
+	}
+	return a.registerUser(username, oidcID, hasAdminGroup)
+}
+
+func (a *OIDCAPI) linkExistingUser(user *model.User, oidcID string, hasAdminGroup bool) (*model.User, int, error) {
+	if !a.LinkByUsername {
+		log.Warn().Str("oidc_id", oidcID).Str("username", user.Name).Msgf("OIDC login rejected: a local user with the username already exists and %s is disabled", config.EnvOIDCLinkByUsername)
+		return nil, http.StatusForbidden, fmt.Errorf("a local user with the username %s already exists and linking by username is disabled", user.Name)
+	}
+	if user.OIDCID != nil {
+		log.Warn().Str("oidc_id", oidcID).Str("bound_oidc_id", *user.OIDCID).Str("username", user.Name).Msg("OIDC login rejected: the username is already bound to a different OIDC identity")
+		return nil, http.StatusForbidden, fmt.Errorf("the user %s is already bound to a different OIDC identity", user.Name)
+	}
+	user.OIDCID = &oidcID
+	if len(a.GroupsAdmin) > 0 {
+		user.Admin = hasAdminGroup
+	}
+	if err := a.DB.UpdateUser(user); err != nil {
+		return nil, http.StatusInternalServerError, fmt.Errorf("failed to bind user to OIDC identity: %w", err)
+	}
+	log.Warn().Str("oidc_id", oidcID).Str("username", user.Name).Bool("admin", user.Admin).Msg("OIDC link by username")
+	return user, 0, nil
+}
+
+func (a *OIDCAPI) registerUser(username, oidcID string, hasAdminGroup bool) (*model.User, int, error) {
+	if !a.AutoRegister {
+		return nil, http.StatusForbidden, errors.New("user does not exist and auto-registration is disabled")
+	}
+	user := &model.User{
+		Name:   username,
+		Pass:   nil,
+		OIDCID: &oidcID,
+	}
+
+	if len(a.GroupsAdmin) > 0 {
+		user.Admin = hasAdminGroup
+	}
+
+	if err := a.DB.CreateUser(user); err != nil {
+		return nil, http.StatusInternalServerError, fmt.Errorf("failed to create user: %w", err)
+	}
+	log.Info().Str("oidc_id", oidcID).Str("username", user.Name).Bool("admin", user.Admin).Msg("OIDC auto registration")
+	if err := a.UserChangeNotifier.fireUserAdded(user.ID); err != nil {
+		log.Error().Err(err).Uint("user_id", user.ID).Msg("Could not notify user change")
+	}
+	return user, 0, nil
+}
+
+func (a *OIDCAPI) createClient(name string, userID uint) (*model.Client, error) {
+	elevatedUntil := time.Now().Add(model.DefaultElevationDuration)
+	tokenPublic, tokenPrivate := generateClientToken()
+	client := &model.Client{
+		Name:                          name,
+		Token:                         tokenPublic,
+		UserID:                        userID,
+		ElevatedUntil:                 &elevatedUntil,
+		ExpiresAfterInactivitySeconds: auth.CookieMaxAge,
+	}
+	if err := a.DB.CreateClient(client); err != nil {
+		return nil, err
+	}
+	client.Token = tokenPrivate
+	return client, nil
+}
+
+func (a *OIDCAPI) popPendingSession(key string) (*pendingOIDCSession, bool) {
+	session, ok := a.pendingSessions.Pop(key)
+	if ok && time.Since(session.CreatedAt) < pendingSessionMaxAge {
+		return session, true
+	}
+	return nil, false
+}
+
+func (a *OIDCAPI) resolvePermission(idTokenClaims, userInfoClaims map[string]any) (bool, int, error) {
+	if a.GroupsClaim == "" {
+		return false, 0, nil
+	}
+
+	groupsRaw, ok := lookupClaim(a.GroupsClaim, idTokenClaims, userInfoClaims)
+	if !ok {
+		return false, http.StatusInternalServerError, fmt.Errorf("groups claim %q is missing", a.GroupsClaim)
+	}
+
+	var groups []string
+	switch groupsRaw := groupsRaw.(type) {
+	case []string:
+		groups = groupsRaw
+	case []any:
+		for _, groupRaw := range groupsRaw {
+			group, ok := groupRaw.(string)
+			if !ok {
+				return false, http.StatusInternalServerError, fmt.Errorf("groups claim %q contains a non-string element: %#v", a.GroupsClaim, groupRaw)
+			}
+			groups = append(groups, group)
+		}
+	case string:
+		groups = append(groups, groupsRaw)
+	default:
+		return false, http.StatusInternalServerError, fmt.Errorf("groups claim %q is not a string or string array: %#v", a.GroupsClaim, groupsRaw)
+	}
+
+	switch {
+	case containsAny(a.GroupsAdmin, groups):
+		return true, 0, nil
+	case len(a.GroupsUser) == 0 || containsAny(a.GroupsUser, groups):
+		return false, 0, nil
+	default:
+		return false, http.StatusForbidden, errors.New("user is not in any allowed group")
+	}
+}
+
+func lookupClaim(name string, idTokenClaims, userInfoClaims map[string]any) (any, bool) {
+	if value, ok := idTokenClaims[name]; ok {
+		return value, true
+	}
+	value, ok := userInfoClaims[name]
+	return value, ok
+}
+
+func containsAny(configured, actual []string) bool {
+	for _, value := range actual {
+		if slices.Contains(configured, value) {
+			return true
+		}
+	}
+
+	return false
+}

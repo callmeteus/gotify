@@ -1,0 +1,420 @@
+package api
+
+import (
+	"encoding/json"
+	"fmt"
+	"io"
+	"net/http/httptest"
+	"net/url"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/gin-gonic/gin"
+	"github.com/gotify/server/v3/auth"
+	"github.com/gotify/server/v3/mode"
+	"github.com/gotify/server/v3/model"
+	"github.com/gotify/server/v3/test"
+	"github.com/gotify/server/v3/test/testdb"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/suite"
+)
+
+func TestClientSuite(t *testing.T) {
+	suite.Run(t, new(ClientSuite))
+}
+
+type ClientSuite struct {
+	suite.Suite
+	db       *testdb.Database
+	a        *ClientAPI
+	ctx      *gin.Context
+	recorder *httptest.ResponseRecorder
+	notified bool
+}
+
+func (s *ClientSuite) BeforeTest(suiteName, testName string) {
+	mode.Set(mode.TestDev)
+	s.recorder = httptest.NewRecorder()
+	s.db = testdb.NewDB(s.T())
+	s.ctx, _ = gin.CreateTestContext(s.recorder)
+	withURL(s.ctx, "http", "example.com")
+	s.notified = false
+	s.a = &ClientAPI{DB: s.db, NotifyDeleted: s.notify}
+}
+
+func (s *ClientSuite) notify(uint, string) {
+	s.notified = true
+}
+
+func (s *ClientSuite) AfterTest(suiteName, testName string) {
+	s.db.Close()
+}
+
+func (s *ClientSuite) Test_ensureClientHasCorrectJsonRepresentation() {
+	actual := &model.Client{ID: 1, UserID: 2, Token: "Casdasfgeeg", Name: "myclient", CreatedAt: testdb.Now}
+	test.JSONEquals(s.T(), actual, `{"id":1,"token":"Casdasfgeeg","name":"myclient","createdAt":"2020-01-01T00:00:00Z","lastUsed":null,"expiresAfterInactivitySeconds":0}`)
+}
+
+func (s *ClientSuite) Test_CreateClient_mapAllParameters() {
+	s.db.User(5)
+
+	test.WithUser(s.ctx, 5)
+	s.withFormData("name=custom_name&description=description_text")
+
+	s.a.CreateClient(s.ctx)
+
+	expected := &model.Client{ID: 1, UserID: 5, Name: "custom_name", CreatedAt: testdb.Now}
+	assert.Equal(s.T(), 200, s.recorder.Code)
+	if client, err := s.db.GetClientByID(1); assert.NoError(s.T(), err) {
+		expected.Token = client.Token
+		assert.Equal(s.T(), expected, client)
+	}
+}
+
+func (s *ClientSuite) Test_CreateClient_ignoresReadOnlyPropertiesInParams() {
+	s.db.User(5)
+	test.WithUser(s.ctx, 5)
+
+	s.withFormData("name=myclient&ID=45&Token=12341234&UserID=333")
+
+	s.a.CreateClient(s.ctx)
+	expected := &model.Client{ID: 1, UserID: 5, Name: "myclient", CreatedAt: testdb.Now}
+
+	assert.Equal(s.T(), 200, s.recorder.Code)
+	if client, err := s.db.GetClientByID(1); assert.NoError(s.T(), err) {
+		expected.Token = client.Token
+		assert.Equal(s.T(), expected, client)
+	}
+}
+
+func (s *ClientSuite) Test_CreateClient_expectBadRequestOnEmptyName() {
+	s.db.User(5)
+
+	test.WithUser(s.ctx, 5)
+	s.withFormData("name=&description=description_text")
+
+	s.a.CreateClient(s.ctx)
+
+	assert.Equal(s.T(), 400, s.recorder.Code)
+	if clients, err := s.db.GetClientsByUser(5); assert.NoError(s.T(), err) {
+		assert.Empty(s.T(), clients)
+	}
+}
+
+func (s *ClientSuite) Test_DeleteClient_expectNotFoundOnCurrentUserIsNotOwner() {
+	s.db.User(5).Client(7)
+	s.db.User(2)
+
+	test.WithUser(s.ctx, 2)
+	s.ctx.Request = httptest.NewRequest("DELETE", "/token/7", nil)
+	s.ctx.Params = gin.Params{{Key: "id", Value: "7"}}
+
+	s.a.DeleteClient(s.ctx)
+
+	assert.Equal(s.T(), 404, s.recorder.Code)
+	s.db.AssertClientExist(7)
+}
+
+func (s *ClientSuite) Test_CreateClient_returnsClientWithID() {
+	s.db.User(5)
+
+	test.WithUser(s.ctx, 5)
+	s.withFormData("name=custom_name")
+
+	s.a.CreateClient(s.ctx)
+
+	expected := &model.Client{ID: 1, Name: "custom_name", CreatedAt: testdb.Now}
+	assert.Equal(s.T(), 200, s.recorder.Code)
+	bodyBytes, err := io.ReadAll(s.recorder.Body)
+	assert.Nil(s.T(), err)
+	var got model.Client
+	assert.Nil(s.T(), json.Unmarshal(bodyBytes, &got))
+	expected.Token = got.Token
+	assert.Equal(s.T(), expected, &got)
+	tokenParsed, err := auth.ParseEnhancedToken(got.Token)
+	assert.Nil(s.T(), err)
+	if client, err := s.db.GetClientByID(1); assert.NoError(s.T(), err) {
+		assert.Equal(s.T(), client.Token, tokenParsed.PublicForm())
+	}
+}
+
+func (s *ClientSuite) Test_CreateClient_withExistingToken() {
+	firstClientTokenPublic, _ := generateClientToken()
+	s.db.User(5).ClientWithToken(1, firstClientTokenPublic)
+
+	test.WithUser(s.ctx, 5)
+	s.withFormData("name=custom_name")
+
+	s.a.CreateClient(s.ctx)
+
+	expected := &model.Client{ID: 2, Name: "custom_name", CreatedAt: testdb.Now}
+	assert.Equal(s.T(), 200, s.recorder.Code)
+	bodyBytes, err := io.ReadAll(s.recorder.Body)
+	assert.Nil(s.T(), err)
+	var got model.Client
+	assert.Nil(s.T(), json.Unmarshal(bodyBytes, &got))
+	expected.Token = got.Token
+	assert.Equal(s.T(), expected, &got)
+	tokenParsed, err := auth.ParseEnhancedToken(got.Token)
+	assert.Nil(s.T(), err)
+	if client, err := s.db.GetClientByID(2); assert.NoError(s.T(), err) {
+		assert.Equal(s.T(), client.Token, tokenParsed.PublicForm())
+		assert.NotEqual(s.T(), tokenParsed.PublicForm(), firstClientTokenPublic)
+	}
+}
+
+func (s *ClientSuite) Test_GetClients() {
+	userBuilder := s.db.User(5)
+	first := userBuilder.NewClientWithToken(1, "perfper")
+	second := userBuilder.NewClientWithToken(2, "asdasd")
+
+	test.WithUser(s.ctx, 5)
+	s.ctx.Request = httptest.NewRequest("GET", "/tokens", nil)
+
+	s.a.GetClients(s.ctx)
+
+	assert.Equal(s.T(), 200, s.recorder.Code)
+	first.Token = ""
+	second.Token = ""
+	test.BodyEquals(s.T(), []*model.Client{first, second}, s.recorder)
+}
+
+func (s *ClientSuite) Test_DeleteClient_expectNotFound() {
+	s.db.User(5)
+
+	test.WithUser(s.ctx, 5)
+	s.ctx.Request = httptest.NewRequest("DELETE", "/token/", nil)
+	s.ctx.AddParam("id", "8")
+
+	s.a.DeleteClient(s.ctx)
+
+	assert.Equal(s.T(), 404, s.recorder.Code)
+}
+
+func (s *ClientSuite) Test_DeleteClient() {
+	s.db.User(5).Client(8)
+
+	test.WithUser(s.ctx, 5)
+	s.ctx.Request = httptest.NewRequest("DELETE", "/token/", nil)
+	s.ctx.AddParam("id", "8")
+
+	assert.False(s.T(), s.notified)
+
+	s.a.DeleteClient(s.ctx)
+
+	assert.Equal(s.T(), 200, s.recorder.Code)
+	s.db.AssertClientNotExist(8)
+	assert.True(s.T(), s.notified)
+}
+
+func (s *ClientSuite) Test_CreateClient_acceptsExpiresAfterInactivitySeconds() {
+	s.db.User(5)
+
+	test.WithUser(s.ctx, 5)
+	s.withFormData("name=custom_name&expiresAfterInactivitySeconds=3600")
+
+	s.a.CreateClient(s.ctx)
+
+	assert.Equal(s.T(), 200, s.recorder.Code)
+	if client, err := s.db.GetClientByID(1); assert.NoError(s.T(), err) {
+		assert.Equal(s.T(), uint(3600), client.ExpiresAfterInactivitySeconds)
+	}
+}
+
+func (s *ClientSuite) Test_UpdateClient_updatesExpiresAfterInactivitySeconds() {
+	s.db.User(5).Client(1)
+
+	test.WithUser(s.ctx, 5)
+	s.withFormData("name=firefox&expiresAfterInactivitySeconds=7200")
+	s.ctx.Params = gin.Params{{Key: "id", Value: "1"}}
+	s.a.UpdateClient(s.ctx)
+
+	assert.Equal(s.T(), 200, s.recorder.Code)
+	if client, err := s.db.GetClientByID(1); assert.NoError(s.T(), err) {
+		assert.Equal(s.T(), uint(7200), client.ExpiresAfterInactivitySeconds)
+	}
+}
+
+func (s *ClientSuite) Test_UpdateClient_expectSuccess() {
+	firstClientTokenPublic, _ := generateClientToken()
+	s.db.User(5).ClientWithToken(1, firstClientTokenPublic)
+
+	test.WithUser(s.ctx, 5)
+	s.withFormData("name=firefox")
+	s.ctx.Params = gin.Params{{Key: "id", Value: "1"}}
+	s.a.UpdateClient(s.ctx)
+
+	expected := &model.Client{
+		ID:        1,
+		Token:     firstClientTokenPublic,
+		UserID:    5,
+		Name:      "firefox",
+		CreatedAt: testdb.Now,
+	}
+
+	assert.Equal(s.T(), 200, s.recorder.Code)
+	test.BodyEquals(s.T(), &model.Client{ID: 1, Name: "firefox", CreatedAt: testdb.Now}, s.recorder)
+	if client, err := s.db.GetClientByID(1); assert.NoError(s.T(), err) {
+		assert.Equal(s.T(), expected, client)
+	}
+}
+
+func (s *ClientSuite) Test_UpdateClient_doesNotExposeToken_andNormalizesElevatedUntil() {
+	expired := testdb.Now.Add(-time.Minute)
+	s.db.User(5).ClientWithToken(1, "CVHA0kbE4q8f2TmLnXu7yRs")
+	assert.NoError(s.T(), s.db.UpdateClientElevatedUntil(1, &expired))
+
+	test.WithUser(s.ctx, 5)
+	s.withFormData("name=firefox")
+	s.ctx.Params = gin.Params{{Key: "id", Value: "1"}}
+	s.a.UpdateClient(s.ctx)
+
+	assert.Equal(s.T(), 200, s.recorder.Code)
+	test.BodyEquals(s.T(), &model.Client{ID: 1, Name: "firefox", CreatedAt: testdb.Now}, s.recorder)
+}
+
+func (s *ClientSuite) Test_UpdateClient_expectNotFound() {
+	test.WithUser(s.ctx, 5)
+	s.ctx.Params = gin.Params{{Key: "id", Value: "2"}}
+	s.a.UpdateClient(s.ctx)
+
+	assert.Equal(s.T(), 404, s.recorder.Code)
+}
+
+func (s *ClientSuite) Test_UpdateClient_WithMissingAttributes_expectBadRequest() {
+	test.WithUser(s.ctx, 5)
+	s.a.UpdateClient(s.ctx)
+
+	assert.Equal(s.T(), 400, s.recorder.Code)
+}
+
+func (s *ClientSuite) Test_ElevateClient_expectSuccess() {
+	s.db.User(5).Client(8)
+
+	test.WithUser(s.ctx, 5)
+	s.withElevateRequest(8, 900)
+
+	before := time.Now()
+	s.a.ElevateClient(s.ctx)
+	after := time.Now()
+
+	assert.Equal(s.T(), 204, s.ctx.Writer.Status())
+	client, err := s.db.GetClientByID(8)
+	assert.NoError(s.T(), err)
+	assert.NotNil(s.T(), client.ElevatedUntil)
+	assert.WithinRange(s.T(), *client.ElevatedUntil, before.Add(15*time.Minute), after.Add(15*time.Minute))
+}
+
+func (s *ClientSuite) Test_ElevateClient_expectNotFoundOnMissingClient() {
+	s.db.User(5)
+
+	test.WithUser(s.ctx, 5)
+	s.withElevateRequest(8, 900)
+
+	s.a.ElevateClient(s.ctx)
+
+	assert.Equal(s.T(), 404, s.recorder.Code)
+}
+
+func (s *ClientSuite) Test_ElevateClient_expectNotFoundOnCurrentUserIsNotOwner() {
+	s.db.User(5).Client(8)
+	s.db.User(2)
+
+	test.WithUser(s.ctx, 2)
+	s.withElevateRequest(8, 900)
+
+	s.a.ElevateClient(s.ctx)
+
+	assert.Equal(s.T(), 404, s.recorder.Code)
+	client, err := s.db.GetClientByID(8)
+	assert.NoError(s.T(), err)
+	assert.Nil(s.T(), client.ElevatedUntil)
+}
+
+func (s *ClientSuite) Test_ElevateClient_expectBadRequestOnMissingID() {
+	s.db.User(5)
+
+	test.WithUser(s.ctx, 5)
+	s.withElevateBody(`{"durationSeconds":900}`)
+
+	s.a.ElevateClient(s.ctx)
+
+	assert.Equal(s.T(), 400, s.recorder.Code)
+}
+
+func (s *ClientSuite) Test_ElevateClient_expectBadRequestOnMissingDuration() {
+	s.db.User(5).Client(8)
+
+	test.WithUser(s.ctx, 5)
+	s.ctx.AddParam("id", "8")
+	s.withElevateBody(`{}`)
+
+	s.a.ElevateClient(s.ctx)
+
+	assert.Equal(s.T(), 400, s.recorder.Code)
+	client, err := s.db.GetClientByID(8)
+	assert.NoError(s.T(), err)
+	assert.Nil(s.T(), client.ElevatedUntil)
+}
+
+func (s *ClientSuite) Test_ElevateClient_cancelSuccess() {
+	s.db.User(5).Client(8)
+
+	test.WithUser(s.ctx, 5)
+	elevatedUntil := time.Now().Add(1 * time.Hour)
+	err := s.db.UpdateClientElevatedUntil(8, &elevatedUntil)
+	assert.NoError(s.T(), err)
+	client, err := s.db.GetClientByID(8)
+	assert.NoError(s.T(), err)
+	assert.Equal(s.T(), elevatedUntil.Unix(), client.ElevatedUntil.Unix())
+
+	s.withElevateRequest(8, -1)
+
+	before := time.Now()
+	s.a.ElevateClient(s.ctx)
+
+	assert.Equal(s.T(), 204, s.ctx.Writer.Status())
+	client, err = s.db.GetClientByID(8)
+	assert.NoError(s.T(), err)
+	assert.True(s.T(), client.ElevatedUntil.Before(before))
+}
+
+func (s *ClientSuite) Test_ElevateClient_clampsHugeDuration() {
+	s.db.User(5).Client(8)
+
+	test.WithUser(s.ctx, 5)
+	// A value that would overflow time.Duration must be clamped to the ceiling
+	// (not rejected, and not wrapped to a past timestamp).
+	s.ctx.AddParam("id", "8")
+	s.withElevateBody(`{"durationSeconds":9223372036854775807}`)
+
+	before := time.Now()
+	s.a.ElevateClient(s.ctx)
+
+	assert.Equal(s.T(), 204, s.ctx.Writer.Status())
+	client, err := s.db.GetClientByID(8)
+	assert.NoError(s.T(), err)
+	assert.NotNil(s.T(), client.ElevatedUntil)
+	// Must be in the future (overflow would have produced a past time).
+	assert.True(s.T(), client.ElevatedUntil.After(before), "elevatedUntil should be in the future, got %v", client.ElevatedUntil)
+}
+
+func (s *ClientSuite) withFormData(formData string) {
+	s.ctx.Request = httptest.NewRequest("POST", "/token", strings.NewReader(formData))
+	s.ctx.Request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+}
+
+func (s *ClientSuite) withElevateRequest(id uint, durationSeconds int) {
+	s.ctx.AddParam("id", fmt.Sprintf("%d", id))
+	s.withElevateBody(fmt.Sprintf(`{"durationSeconds":%d}`, durationSeconds))
+}
+
+func (s *ClientSuite) withElevateBody(body string) {
+	s.ctx.Request = httptest.NewRequest("POST", "/client/ignored/elevate", strings.NewReader(body))
+	s.ctx.Request.Header.Set("Content-Type", "application/json")
+}
+
+func withURL(ctx *gin.Context, scheme, host string) {
+	ctx.Set("location", &url.URL{Scheme: scheme, Host: host})
+}

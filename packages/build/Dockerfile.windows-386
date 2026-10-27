@@ -1,0 +1,15 @@
+ARG GO_VERSION
+FROM gotify/build:$GO_VERSION-linux-amd64
+ARG VCS_REF
+RUN \
+  apt-get update && \
+  apt-get install -y mingw-w64
+
+ENV CGO_ENABLED=1
+ENV CC=i686-w64-mingw32-gcc
+ENV CXX=i686-w64-mingw32-g++
+ENV GOOS=windows
+ENV GOARCH=386
+
+LABEL org.opencontainers.image.source="https://github.com/gotify/build" \
+  org.opencontainers.image.revision=$VCS_REF 

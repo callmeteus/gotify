@@ -1,0 +1,33 @@
+# Setup Environment
+
+Gotify requires:
+
+- Go 1.25 or newer
+- Node 24 or newer
+- Yarn 1.9 or newer
+
+## Clone sources
+
+Clone the gotify/server source from git:
+
+```bash
+$ git clone https://github.com/gotify/server.git && cd server
+```
+
+## Setup Backend
+
+Install the development tools (needed for generating the Swagger spec):
+
+```bash
+$ make download-tools
+```
+
+## Setup UI
+
+_Commands must be executed inside the ui directory._
+
+Download dependencies with [yarn](https://github.com/yarnpkg/yarn).
+
+```bash
+$ yarn
+```

@@ -1,0 +1,16 @@
+ARG GO_VERSION
+FROM gotify/build:$GO_VERSION-linux-amd64
+ARG VCS_REF
+RUN \
+  apt-get update && \
+  apt-get install -y gcc-arm-linux-gnueabihf g++-arm-linux-gnueabihf
+
+ENV CGO_ENABLED=1
+ENV CC=arm-linux-gnueabihf-gcc 
+ENV CXX=arm-linux-gnueabihf-g++
+ENV GOOS=linux
+ENV GOARCH=arm
+ENV GOARM=7
+
+LABEL org.opencontainers.image.source="https://github.com/gotify/build" \
+  org.opencontainers.image.revision=$VCS_REF 

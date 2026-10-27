@@ -1,0 +1,193 @@
+import React, {useEffect, useState} from 'react';
+import Grid from '@mui/material/Grid';
+import IconButton from '@mui/material/IconButton';
+import Paper from '@mui/material/Paper';
+import Table from '@mui/material/Table';
+import TableBody from '@mui/material/TableBody';
+import TableCell from '@mui/material/TableCell';
+import TableHead from '@mui/material/TableHead';
+import TableRow from '@mui/material/TableRow';
+import Delete from '@mui/icons-material/Delete';
+import Edit from '@mui/icons-material/Edit';
+import Security from '@mui/icons-material/Security';
+import Button from '@mui/material/Button';
+import Tooltip from '@mui/material/Tooltip';
+import ConfirmDialog from '../common/ConfirmDialog';
+import DefaultPage from '../common/DefaultPage';
+import AddClientDialog from './AddClientDialog';
+import UpdateClientDialog from './UpdateClientDialog';
+import ElevateClientDialog from './ElevateClientDialog';
+import {IClient} from '../types';
+import {LastUsedCell} from '../common/LastUsedCell';
+import {formatDate} from '../common/TimeAgoFormatter';
+import {RemainingTime} from '../common/RemainingTime';
+import {observer} from 'mobx-react-lite';
+import {useStores} from '../stores';
+import {TokenConfirmDialog} from '../common/TokenConfirmDialog';
+
+const Clients = observer(() => {
+    const {clientStore, currentUser} = useStores();
+    const [toDeleteClient, setToDeleteClient] = useState<IClient>();
+    const [toUpdateClient, setToUpdateClient] = useState<IClient>();
+    const [toElevateClient, setToElevateClient] = useState<IClient>();
+    const [createDialog, setCreateDialog] = useState<boolean>(false);
+    const [toShowToken, setToShowToken] = useState<string>('');
+    const clients = clientStore.getItems();
+
+    useEffect(() => void clientStore.refresh(), []);
+
+    return (
+        <DefaultPage
+            title="Clients"
+            maxWidth={1000}
+            rightControl={
+                <Button
+                    id="create-client"
+                    variant="contained"
+                    color="primary"
+                    onClick={() => setCreateDialog(true)}>
+                    Create Client
+                </Button>
+            }>
+            <Grid size={12}>
+                <Paper elevation={6} style={{overflowX: 'auto'}}>
+                    <Table id="client-table">
+                        <TableHead>
+                            <TableRow style={{textAlign: 'center'}}>
+                                <TableCell>Name</TableCell>
+                                <TableCell>Elevation ends</TableCell>
+                                <TableCell>Expires in</TableCell>
+                                <TableCell>Last Used</TableCell>
+                                <TableCell>Created</TableCell>
+                                <TableCell />
+                                <TableCell />
+                                <TableCell />
+                            </TableRow>
+                        </TableHead>
+                        <TableBody>
+                            {clients.map((client: IClient) => (
+                                <Row
+                                    key={client.id}
+                                    name={client.name}
+                                    createdAt={client.createdAt}
+                                    lastUsed={client.lastUsed}
+                                    elevatedUntil={client.elevatedUntil}
+                                    expiresAt={client.expiresAt}
+                                    current={client.id === currentUser.user.clientId}
+                                    fEdit={() => setToUpdateClient(client)}
+                                    fDelete={() => setToDeleteClient(client)}
+                                    fElevate={() => setToElevateClient(client)}
+                                />
+                            ))}
+                        </TableBody>
+                    </Table>
+                </Paper>
+            </Grid>
+            {toShowToken && (
+                <TokenConfirmDialog token={toShowToken} fClose={() => setToShowToken('')} />
+            )}
+            {createDialog && (
+                <AddClientDialog
+                    fClose={(token) => {
+                        setCreateDialog(false);
+                        setToShowToken(token ?? '');
+                    }}
+                    fOnSubmit={clientStore.create}
+                />
+            )}
+            {toUpdateClient != null && (
+                <UpdateClientDialog
+                    fClose={() => setToUpdateClient(undefined)}
+                    fOnSubmit={(name, expiresAfterInactivitySeconds) =>
+                        clientStore.update(toUpdateClient.id, name, expiresAfterInactivitySeconds)
+                    }
+                    initialName={toUpdateClient.name}
+                    initialExpiresAfterInactivitySeconds={
+                        toUpdateClient.expiresAfterInactivitySeconds
+                    }
+                />
+            )}
+            {toDeleteClient != null && (
+                <ConfirmDialog
+                    title="Confirm Delete"
+                    text={'Delete ' + toDeleteClient.name + '?'}
+                    fClose={() => setToDeleteClient(undefined)}
+                    fOnSubmit={() => clientStore.remove(toDeleteClient.id)}
+                    requireElevated
+                />
+            )}
+            {toElevateClient != null && (
+                <ElevateClientDialog
+                    clientName={toElevateClient.name}
+                    clientId={toElevateClient.id}
+                    fClose={() => setToElevateClient(undefined)}
+                />
+            )}
+        </DefaultPage>
+    );
+});
+
+interface IRowProps {
+    name: string;
+    createdAt: string;
+    lastUsed: string | null;
+    elevatedUntil?: string;
+    expiresAt: string | null;
+    current: boolean;
+    fEdit: VoidFunction;
+    fDelete: VoidFunction;
+    fElevate: VoidFunction;
+}
+
+const Row = ({
+    name,
+    createdAt,
+    lastUsed,
+    elevatedUntil,
+    expiresAt,
+    current,
+    fEdit,
+    fDelete,
+    fElevate,
+}: IRowProps) => (
+    <TableRow selected={current} aria-current={current ? 'true' : undefined}>
+        <TableCell>
+            <span className="name">{name}</span> {current ? <i> (current)</i> : ''}
+        </TableCell>
+        <TableCell align="right" title={elevatedUntil}>
+            <RemainingTime
+                until={
+                    elevatedUntil && Date.parse(elevatedUntil) > Date.now()
+                        ? elevatedUntil
+                        : undefined
+                }
+            />
+        </TableCell>
+        <TableCell align="right" className="expires-in" title={expiresAt ?? undefined}>
+            <RemainingTime until={expiresAt} />
+        </TableCell>
+        <TableCell>
+            <LastUsedCell lastUsed={lastUsed} />
+        </TableCell>
+        <TableCell title={createdAt}>{formatDate(createdAt)}</TableCell>
+        <TableCell align="right" padding="none">
+            <Tooltip title="Elevate">
+                <IconButton onClick={fElevate} className="elevate">
+                    <Security />
+                </IconButton>
+            </Tooltip>
+        </TableCell>
+        <TableCell align="right" padding="none">
+            <IconButton onClick={fEdit} className="edit">
+                <Edit />
+            </IconButton>
+        </TableCell>
+        <TableCell align="right" padding="none">
+            <IconButton onClick={fDelete} className="delete">
+                <Delete />
+            </IconButton>
+        </TableCell>
+    </TableRow>
+);
+
+export default Clients;

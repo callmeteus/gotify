@@ -1,0 +1,35 @@
+node_modules/
+dist/
+.DS_Store
+*.log
+.env
+.env.local
+
+# Go (server, cli, plugins, etc.)
+vendor/
+coverage.txt
+**/coverage.out
+*.test
+/gotify-server.env
+
+# Server runtime / build artifacts
+packages/server/build/
+packages/server/certs/
+packages/server/licenses/
+packages/server/config.yml
+packages/server/data/
+packages/server/images/
+
+# Android
+packages/android/**/build/
+packages/android/.gradle/
+packages/android/local.properties
+*.apk
+*.aab
+
+# IDE
+.idea/
+.vscode/
+
+# Stillmark
+.stillmark/plans/

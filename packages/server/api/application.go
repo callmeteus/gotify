@@ -1,0 +1,633 @@
+package api
+
+import (
+	"errors"
+	"fmt"
+	"io"
+	"mime/multipart"
+	"net/http"
+	"os"
+	"path/filepath"
+	"strings"
+
+	"github.com/gin-gonic/gin"
+	"github.com/gotify/server/v3/auth"
+	"github.com/gotify/server/v3/model"
+	"github.com/h2non/filetype"
+	"gorm.io/gorm"
+)
+
+// The ApplicationDatabase interface for encapsulating database access.
+type ApplicationDatabase interface {
+	CreateApplication(application *model.Application) error
+	GetApplicationByToken(token string) (*model.Application, error)
+	GetApplicationByID(id uint) (*model.Application, error)
+	GetApplicationsByUser(userID uint) ([]*model.Application, error)
+	DeleteApplicationByID(id uint) error
+	UpdateApplication(application *model.Application) error
+}
+
+// The ApplicationAPI provides handlers for managing applications.
+type ApplicationAPI struct {
+	DB       ApplicationDatabase
+	ImageDir string
+	Alarms   *AlarmAPI
+}
+
+// Application Params Model
+//
+// Params allowed to create or update Applications.
+//
+// swagger:model ApplicationParams
+type ApplicationParams struct {
+	// The application name. This is how the application should be displayed to the user.
+	//
+	// required: true
+	// example: Backup Server
+	Name string `form:"name" query:"name" json:"name" binding:"required"`
+	// The description of the application.
+	//
+	// example: Backup server for the interwebs
+	Description string `form:"description" query:"description" json:"description"`
+	// The default priority of messages sent by this application. Defaults to 0.
+	//
+	// example: 5
+	DefaultPriority int `form:"defaultPriority" query:"defaultPriority" json:"defaultPriority"`
+	// The sortKey for the application. Uses fractional indexing.
+	//
+	// example: a1
+	SortKey string `form:"sortKey" query:"sortKey" json:"sortKey"`
+	// The alarm configuration. Omitted fields keep the stored alarm.
+	Alarm *model.AlarmConfig `json:"alarm"`
+}
+
+// CreateApplication creates an application and returns the access token.
+// swagger:operation POST /application application createApp
+//
+// Create an application.
+//
+//	---
+//	consumes: [application/json]
+//	produces: [application/json]
+//	security: [clientTokenAuthorizationHeader: [], clientTokenHeader: [], clientTokenQuery: [], basicAuth: []]
+//	parameters:
+//	- name: body
+//	  in: body
+//	  description: the application to add
+//	  required: true
+//	  schema:
+//	    $ref: "#/definitions/ApplicationParams"
+//	responses:
+//	  200:
+//	    description: Ok
+//	    schema:
+//	        $ref: "#/definitions/Application"
+//	  400:
+//	    description: Bad Request
+//	    schema:
+//	        $ref: "#/definitions/Error"
+//	  401:
+//	    description: Unauthorized
+//	    schema:
+//	        $ref: "#/definitions/Error"
+//	  403:
+//	    description: Forbidden
+//	    schema:
+//	        $ref: "#/definitions/Error"
+func (a *ApplicationAPI) CreateApplication(ctx *gin.Context) {
+	applicationParams := ApplicationParams{}
+	if err := ctx.Bind(&applicationParams); err == nil {
+		tokenPublic, tokenPrivate := generateApplicationToken()
+		app := model.Application{
+			Name:            applicationParams.Name,
+			Description:     applicationParams.Description,
+			DefaultPriority: applicationParams.DefaultPriority,
+			SortKey:         applicationParams.SortKey,
+			Token:           tokenPublic,
+			UserID:          auth.GetUserID(ctx),
+			Internal:        false,
+		}
+
+		if err := a.DB.CreateApplication(&app); err != nil {
+			handleApplicationError(ctx, err)
+			return
+		}
+		sanitizeApplication(&app)
+		app.Token = tokenPrivate
+		ctx.JSON(200, &app)
+	}
+}
+
+// GetApplications returns all applications a user has.
+// swagger:operation GET /application application getApps
+//
+// Return all applications.
+//
+//	---
+//	consumes: [application/json]
+//	produces: [application/json]
+//	security: [clientTokenAuthorizationHeader: [], clientTokenHeader: [], clientTokenQuery: [], basicAuth: []]
+//	responses:
+//	  200:
+//	    description: Ok
+//	    schema:
+//	      type: array
+//	      items:
+//	        $ref: "#/definitions/Application"
+//	  401:
+//	    description: Unauthorized
+//	    schema:
+//	        $ref: "#/definitions/Error"
+//	  403:
+//	    description: Forbidden
+//	    schema:
+//	        $ref: "#/definitions/Error"
+func (a *ApplicationAPI) GetApplications(ctx *gin.Context) {
+	userID := auth.GetUserID(ctx)
+	apps, err := a.DB.GetApplicationsByUser(userID)
+	if success := successOrAbort(ctx, 500, err); !success {
+		return
+	}
+	for _, app := range apps {
+		a.attachAlarm(app)
+		sanitizeApplication(app)
+	}
+	ctx.JSON(200, apps)
+}
+
+// DeleteApplication deletes an application by its id.
+// swagger:operation DELETE /application/{id} application deleteApp
+//
+// Delete an application.
+//
+// Requires elevated authentication.
+//
+//	---
+//	consumes: [application/json]
+//	produces: [application/json]
+//	parameters:
+//	- name: id
+//	  in: path
+//	  description: the application id
+//	  required: true
+//	  type: integer
+//	  format: int64
+//	security: [clientTokenAuthorizationHeader: [], clientTokenHeader: [], clientTokenQuery: [], basicAuth: []]
+//	responses:
+//	  200:
+//	    description: Ok
+//	  400:
+//	    description: Bad Request
+//	    schema:
+//	        $ref: "#/definitions/Error"
+//	  401:
+//	    description: Unauthorized
+//	    schema:
+//	        $ref: "#/definitions/Error"
+//	  403:
+//	    description: Forbidden
+//	    schema:
+//	        $ref: "#/definitions/Error"
+//	  404:
+//	    description: Not Found
+//	    schema:
+//	        $ref: "#/definitions/Error"
+func (a *ApplicationAPI) DeleteApplication(ctx *gin.Context) {
+	withID(ctx, "id", func(id uint) {
+		app, err := a.DB.GetApplicationByID(id)
+		if success := successOrAbort(ctx, 500, err); !success {
+			return
+		}
+		if app != nil && app.UserID == auth.GetUserID(ctx) {
+			if app.Internal {
+				ctx.AbortWithError(400, errors.New("cannot delete internal application"))
+				return
+			}
+			if success := successOrAbort(ctx, 500, a.DB.DeleteApplicationByID(id)); !success {
+				return
+			}
+			if app.Image != "" {
+				os.Remove(a.ImageDir + app.Image)
+			}
+		} else {
+			ctx.AbortWithError(404, fmt.Errorf("app with id %d doesn't exists", id))
+		}
+	})
+}
+
+// UpdateApplication updates an application info by its id.
+// swagger:operation PUT /application/{id} application updateApplication
+//
+// Update an application.
+//
+//	---
+//	consumes: [application/json]
+//	produces: [application/json]
+//	security: [clientTokenAuthorizationHeader: [], clientTokenHeader: [], clientTokenQuery: [], basicAuth: []]
+//	parameters:
+//	- name: body
+//	  in: body
+//	  description: the application to update
+//	  required: true
+//	  schema:
+//	    $ref: "#/definitions/ApplicationParams"
+//	- name: id
+//	  in: path
+//	  description: the application id
+//	  required: true
+//	  type: integer
+//	  format: int64
+//	responses:
+//	  200:
+//	    description: Ok
+//	    schema:
+//	        $ref: "#/definitions/Application"
+//	  400:
+//	    description: Bad Request
+//	    schema:
+//	        $ref: "#/definitions/Error"
+//	  401:
+//	    description: Unauthorized
+//	    schema:
+//	        $ref: "#/definitions/Error"
+//	  403:
+//	    description: Forbidden
+//	    schema:
+//	        $ref: "#/definitions/Error"
+//	  404:
+//	    description: Not Found
+//	    schema:
+//	        $ref: "#/definitions/Error"
+func (a *ApplicationAPI) UpdateApplication(ctx *gin.Context) {
+	withID(ctx, "id", func(id uint) {
+		app, err := a.DB.GetApplicationByID(id)
+		if success := successOrAbort(ctx, 500, err); !success {
+			return
+		}
+		if app != nil && app.UserID == auth.GetUserID(ctx) {
+			applicationParams := ApplicationParams{}
+			if err := ctx.Bind(&applicationParams); err == nil {
+				app.Description = applicationParams.Description
+				app.Name = applicationParams.Name
+				app.DefaultPriority = applicationParams.DefaultPriority
+				if applicationParams.SortKey != "" {
+					app.SortKey = applicationParams.SortKey
+				}
+				if applicationParams.Alarm != nil && a.Alarms != nil {
+					if err := a.Alarms.SaveConfig(app.ID, applicationParams.Alarm); err != nil {
+						ctx.AbortWithError(400, err)
+						return
+					}
+				}
+
+				if err := a.DB.UpdateApplication(app); err != nil {
+					handleApplicationError(ctx, err)
+					return
+				}
+				a.attachAlarm(app)
+				ctx.JSON(200, sanitizeApplication(app))
+			}
+		} else {
+			ctx.AbortWithError(404, fmt.Errorf("app with id %d doesn't exists", id))
+		}
+	})
+}
+
+// UpdateApplicationSecurity performs security updates on an application.
+// swagger:operation PUT /application/{id}/security application updateAppSecurity
+//
+// Perform security updates on an application.
+//
+// Requires elevated authentication.
+//
+//	---
+//	consumes: [application/json]
+//	produces: [application/json]
+//	security: [clientTokenAuthorizationHeader: [], clientTokenHeader: [], clientTokenQuery: [], basicAuth: []]
+//	parameters:
+//	- name: body
+//	  in: body
+//	  description: security update action descriptor
+//	  required: true
+//	  schema:
+//	    $ref: "#/definitions/SecurityUpdateAction"
+//	- name: id
+//	  in: path
+//	  description: the application id
+//	  required: true
+//	  type: integer
+//	  format: int64
+//	responses:
+//	  200:
+//	    description: Ok
+//	    schema:
+//	        $ref: "#/definitions/SecurityUpdateActionResponse"
+//	  400:
+//	    description: Bad Request
+//	    schema:
+//	        $ref: "#/definitions/Error"
+//	  401:
+//	    description: Unauthorized
+//	    schema:
+//	        $ref: "#/definitions/Error"
+//	  403:
+//	    description: Forbidden
+//	    schema:
+//	        $ref: "#/definitions/Error"
+//	  404:
+//	    description: Not Found
+//	    schema:
+//	        $ref: "#/definitions/Error"
+//	  500:
+//	    description: Server Error
+//	    schema:
+//	        $ref: "#/definitions/Error"
+func (a *ApplicationAPI) UpdateApplicationSecurity(ctx *gin.Context) {
+	withID(ctx, "id", func(id uint) {
+		app, err := a.DB.GetApplicationByID(id)
+		if success := successOrAbort(ctx, 500, err); !success {
+			return
+		}
+		if app == nil || app.UserID != auth.GetUserID(ctx) {
+			ctx.AbortWithError(404, fmt.Errorf("app with id %d doesn't exists", id))
+			return
+		}
+
+		action := model.SecurityUpdateAction{}
+		response := model.SecurityUpdateActionResponse{}
+		if err := ctx.Bind(&action); err == nil {
+			if action.RegenerateToken {
+				tokenPublic, tokenPrivate := generateApplicationToken()
+				app.Token = tokenPublic
+				response.RegenerateToken = &model.RegenerateTokenResponse{
+					Token: tokenPrivate,
+				}
+			}
+			if success := successOrAbort(ctx, 500, a.DB.UpdateApplication(app)); !success {
+				return
+			}
+			ctx.JSON(200, response)
+		}
+	})
+}
+
+// UploadApplicationImage uploads an image for an application.
+// swagger:operation POST /application/{id}/image application uploadAppImage
+//
+// Upload an image for an application.
+//
+//	---
+//	consumes:
+//	- multipart/form-data
+//	produces: [application/json]
+//	security: [clientTokenAuthorizationHeader: [], clientTokenHeader: [], clientTokenQuery: [], basicAuth: []]
+//	parameters:
+//	- name: file
+//	  in: formData
+//	  description: the application image
+//	  required: true
+//	  type: file
+//	- name: id
+//	  in: path
+//	  description: the application id
+//	  required: true
+//	  type: integer
+//	  format: int64
+//	responses:
+//	  200:
+//	    description: Ok
+//	    schema:
+//	        $ref: "#/definitions/Application"
+//	  400:
+//	    description: Bad Request
+//	    schema:
+//	        $ref: "#/definitions/Error"
+//	  401:
+//	    description: Unauthorized
+//	    schema:
+//	        $ref: "#/definitions/Error"
+//	  403:
+//	    description: Forbidden
+//	    schema:
+//	        $ref: "#/definitions/Error"
+//	  404:
+//	    description: Not Found
+//	    schema:
+//	        $ref: "#/definitions/Error"
+//	  500:
+//	    description: Server Error
+//	    schema:
+//	        $ref: "#/definitions/Error"
+func (a *ApplicationAPI) UploadApplicationImage(ctx *gin.Context) {
+	withID(ctx, "id", func(id uint) {
+		app, err := a.DB.GetApplicationByID(id)
+		if success := successOrAbort(ctx, 500, err); !success {
+			return
+		}
+		if app != nil && app.UserID == auth.GetUserID(ctx) {
+			file, err := ctx.FormFile("file")
+			if err == http.ErrMissingFile {
+				ctx.AbortWithError(400, errors.New("file with key 'file' must be present"))
+				return
+			} else if err != nil {
+				ctx.AbortWithError(500, err)
+				return
+			}
+			head := make([]byte, 261)
+			open, err := file.Open()
+			if err != nil {
+				ctx.AbortWithError(500, err)
+				return
+			}
+			defer open.Close()
+			if _, err := open.Read(head); err != nil && err != io.EOF {
+				ctx.AbortWithError(500, err)
+				return
+			}
+			if !filetype.IsImage(head) {
+				ctx.AbortWithError(400, errors.New("file must be an image"))
+				return
+			}
+
+			ext := filepath.Ext(file.Filename)
+			if !ValidApplicationImageExt(ext) {
+				ctx.AbortWithError(400, errors.New("invalid file extension"))
+				return
+			}
+
+			name := generateNonExistingImageName(a.ImageDir, func() string {
+				return generateImageName() + ext
+			})
+
+			err = saveImage(file, a.ImageDir+name)
+			if err != nil {
+				ctx.AbortWithError(500, err)
+				return
+			}
+
+			oldImage := app.Image
+			app.Image = name
+			if err := a.DB.UpdateApplication(app); err != nil {
+				// The application still references the old image, so keep
+				// it and drop the new one that nothing references.
+				os.Remove(a.ImageDir + name)
+				ctx.AbortWithError(500, err)
+				return
+			}
+
+			if oldImage != "" {
+				os.Remove(a.ImageDir + oldImage)
+			}
+			ctx.JSON(200, sanitizeApplication(app))
+		} else {
+			ctx.AbortWithError(404, fmt.Errorf("app with id %d doesn't exists", id))
+		}
+	})
+}
+
+// RemoveApplicationImage deletes an image of an application.
+// swagger:operation DELETE /application/{id}/image application removeAppImage
+//
+// Deletes an image of an application.
+//
+//	---
+//	consumes: [application/json]
+//	produces: [application/json]
+//	parameters:
+//	- name: id
+//	  in: path
+//	  description: the application id
+//	  required: true
+//	  type: integer
+//	  format: int64
+//	security: [clientTokenAuthorizationHeader: [], clientTokenHeader: [], clientTokenQuery: [], basicAuth: []]
+//	responses:
+//	  200:
+//	    description: Ok
+//	  400:
+//	    description: Bad Request
+//	    schema:
+//	        $ref: "#/definitions/Error"
+//	  401:
+//	    description: Unauthorized
+//	    schema:
+//	        $ref: "#/definitions/Error"
+//	  403:
+//	    description: Forbidden
+//	    schema:
+//	        $ref: "#/definitions/Error"
+//	  404:
+//	    description: Not Found
+//	    schema:
+//	        $ref: "#/definitions/Error"
+//	  500:
+//	    description: Server Error
+//	    schema:
+//	        $ref: "#/definitions/Error"
+func (a *ApplicationAPI) RemoveApplicationImage(ctx *gin.Context) {
+	withID(ctx, "id", func(id uint) {
+		app, err := a.DB.GetApplicationByID(id)
+		if success := successOrAbort(ctx, 500, err); !success {
+			return
+		}
+		if app != nil && app.UserID == auth.GetUserID(ctx) {
+			if app.Image == "" {
+				ctx.AbortWithError(400, fmt.Errorf("app with id %d does not have a customized image", id))
+				return
+			}
+
+			image := app.Image
+			app.Image = ""
+			if success := successOrAbort(ctx, 500, a.DB.UpdateApplication(app)); !success {
+				return
+			}
+			os.Remove(a.ImageDir + image)
+			ctx.JSON(200, sanitizeApplication(app))
+		} else {
+			ctx.AbortWithError(404, fmt.Errorf("app with id %d doesn't exists", id))
+		}
+	})
+}
+
+func (a *ApplicationAPI) attachAlarm(app *model.Application) {
+	if a.Alarms == nil || app == nil {
+		return
+	}
+	config, err := a.Alarms.ConfigFor(app.ID)
+	if err != nil || config == nil {
+		return
+	}
+	app.Alarm = config
+}
+
+func sanitizeApplication(app *model.Application) *model.Application {
+	app.Token = ""
+	if app.Image == "" {
+		// This must stay in sync with the isDefaultImage check in ui/src/application/Applications.tsx.
+		app.Image = "static/defaultapp.png"
+	} else {
+		app.Image = "image/" + app.Image
+	}
+	return app
+}
+
+// saveImage writes the uploaded file to dst. If it can't be written
+// completely, the partially written file is removed.
+func saveImage(file *multipart.FileHeader, dst string) error {
+	src, err := file.Open()
+	if err != nil {
+		return err
+	}
+	defer src.Close()
+	return writeImage(dst, src)
+}
+
+func writeImage(dst string, src io.Reader) (err error) {
+	out, err := os.Create(dst)
+	if err != nil {
+		return err
+	}
+	defer func() {
+		if closeErr := out.Close(); err == nil {
+			err = closeErr
+		}
+		if err != nil {
+			os.Remove(dst)
+		}
+	}()
+	_, err = io.Copy(out, src)
+	return err
+}
+
+func exist(path string) bool {
+	if _, err := os.Stat(path); os.IsNotExist(err) {
+		return false
+	}
+	return true
+}
+
+func generateNonExistingImageName(imgDir string, gen func() string) string {
+	for {
+		name := gen()
+		if !exist(imgDir + name) {
+			return name
+		}
+	}
+}
+
+func ValidApplicationImageExt(ext string) bool {
+	switch strings.ToLower(ext) {
+	case ".gif", ".png", ".jpg", ".jpeg":
+		return true
+	default:
+		return false
+	}
+}
+
+func handleApplicationError(ctx *gin.Context, err error) {
+	if errors.Is(err, gorm.ErrDuplicatedKey) {
+		ctx.AbortWithError(400, errors.New("sort key is not unique"))
+	} else {
+		ctx.AbortWithError(500, err)
+	}
+}

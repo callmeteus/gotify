@@ -1,0 +1,15 @@
+{
+  "name": "gotfy-fork",
+  "private": true,
+  "version": "0.0.0",
+  "workspaces": [
+    "packages/website"
+  ],
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "website:dev": "yarn workspace gotify-website dev",
+    "website:build": "yarn workspace gotify-website build"
+  }
+}
