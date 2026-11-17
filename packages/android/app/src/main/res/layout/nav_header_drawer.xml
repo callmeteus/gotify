@@ -60,6 +60,49 @@
         app:layout_constraintStart_toStartOf="parent"
         tools:text="gotify/android vX.X.X; gotify/server vX.X.X" />
 
+    <LinearLayout
+        android:id="@+id/presence_row"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="8dp"
+        android:gravity="center_vertical"
+        android:orientation="horizontal"
+        app:layout_constraintTop_toBottomOf="@id/header_version"
+        app:layout_constraintStart_toStartOf="parent">
+
+        <com.google.android.material.textview.MaterialTextView
+            android:id="@+id/header_presence"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:textSize="12sp"
+            android:maxLines="1"
+            android:ellipsize="end"
+            tools:text="Status: at_desk" />
+
+        <com.google.android.material.button.MaterialButton
+            android:id="@+id/presence_at_desk"
+            style="@style/Widget.Material3.Button.TextButton"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:minWidth="0dp"
+            android:paddingStart="4dp"
+            android:paddingEnd="4dp"
+            android:text="@string/presence_at_desk"
+            android:textSize="10sp" />
+
+        <com.google.android.material.button.MaterialButton
+            android:id="@+id/presence_away"
+            style="@style/Widget.Material3.Button.TextButton"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:minWidth="0dp"
+            android:paddingStart="4dp"
+            android:paddingEnd="4dp"
+            android:text="@string/presence_manual_15m"
+            android:textSize="10sp" />
+    </LinearLayout>
+
     <ImageButton
         android:id="@+id/refresh_all"
         android:layout_width="wrap_content"

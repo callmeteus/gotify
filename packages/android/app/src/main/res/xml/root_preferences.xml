@@ -51,6 +51,41 @@
             android:summary="@string/setting_summary_prompt_onreceive_intent" />
     </PreferenceCategory>
 
+    <PreferenceCategory app:title="@string/presence_section">
+        <SwitchPreferenceCompat
+            android:defaultValue="false"
+            android:key="@string/setting_key_presence_enabled"
+            android:summary="@string/setting_presence_enabled_summary"
+            android:title="@string/setting_presence_enabled" />
+
+        <EditTextPreference
+            android:key="presence_wifi_ssids"
+            android:summary="@string/presence_wifi_summary"
+            android:title="@string/presence_wifi_title" />
+
+        <EditTextPreference
+            android:key="presence_bluetooth_devices"
+            android:summary="@string/presence_bluetooth_summary"
+            android:title="@string/presence_bluetooth_title" />
+
+        <EditTextPreference
+            android:key="presence_geofences"
+            android:summary="@string/presence_geofences_summary"
+            android:title="@string/presence_geofences_title" />
+
+        <EditTextPreference
+            android:defaultValue="120"
+            android:inputType="number"
+            android:key="presence_away_debounce_seconds"
+            android:title="@string/presence_debounce_title" />
+
+        <EditTextPreference
+            android:defaultValue="1800"
+            android:inputType="number"
+            android:key="presence_ttl_seconds"
+            android:title="@string/presence_ttl_title" />
+    </PreferenceCategory>
+
     <PreferenceCategory app:title="@string/setting_connection">
         <EditTextPreference
             android:defaultValue="60"

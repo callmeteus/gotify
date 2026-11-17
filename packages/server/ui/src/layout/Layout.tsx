@@ -19,6 +19,7 @@ import * as config from '../config';
 import Applications from '../application/Applications';
 import Clients from '../client/Clients';
 import Plugins from '../plugin/Plugins';
+import Presence from '../presence/Presence';
 import Login from '../user/Login';
 import Messages from '../message/Messages';
 import Settings from '../user/Settings';
@@ -134,6 +135,7 @@ const Layout = observer(() => {
                                             element={authed(<Applications />)}
                                         />
                                         <Route path="/clients" element={authed(<Clients />)} />
+                                        <Route path="/presence" element={authed(<Presence />)} />
                                         <Route
                                             path="/users"
                                             element={authed(elevated(<Users />))}

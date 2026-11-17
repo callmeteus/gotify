@@ -1,0 +1,266 @@
+---
+title: Presença automática no Gotify
+version: 1
+localOnly: true
+---
+
+Hoje o time só sabe que alguém "está no PC" quando a pessoa abre o app e toca no botão. A reunião define a dor: comunicação e alinhamento entre quem está em Londrina, na Bahia e em Vitória. O pedido do Zus na reunião é exatamente a **posição automática** — então ele entra neste mesmo plano, não como um item separado.
+
+A entrega adiciona um status de presença contínuo (**no PC** / **fora** / **desconhecido**), detectado no aparelho por localização, Wi-Fi e Bluetooth, e publicado no servidor para o time ver. O alarme em estágios já implementado continua **manual e independente**: a detecção nunca avança nem encerra um incidente.
+
+<Callout id="execution-status" tone="info" title="Estado da execução">
+
+Executado: modelo, API, TTL e testes de presença no servidor; broadcast opt-in no `/stream`; página de presença na UI web; modelo de cliente e avaliador/detectores/monitor/UI no Android (APK de debug gerado); scaffold iOS com avaliador e testes XCTest.
+
+Pendente: entitlement de critical alert e push APNs na Apple (externo ao repo), build do pacote iOS (sem toolchain Swift nesta máquina) e piloto com o time em aparelho real.
+
+</Callout>
+
+<Callout id="scope" tone="decision" title="Decisões de escopo">
+
+- **Só status.** A detecção atualiza a presença visível ao time. Os botões "I'm up" / "I'm at my computer" do alarme seguem manuais.
+- **Dois apps.** Android (já existe) e iOS (novo pacote `packages/ios`). Nenhum dos dois mexe na máquina de estados do incidente.
+- **Servidor é a fonte da verdade.** O sinal é calculado no aparelho (privacidade e bateria); o servidor guarda o último estado de cada usuário e transmite para todos os clientes conectados.
+- **Compatibilidade.** Clients antigos continuam recebendo apenas mensagens no `/stream`. Presença entra por um canal explicitamente ativado.
+
+</Callout>
+
+## O que já existe
+
+O commit `9236e2e` já entrega o alarme em estágios: `ApplicationAlarm`, `Incident`, `POST /incident/:id/advance`, o loop de prazo no `runner`, a `AlarmActivity` em tela cheia e o campo `incident` no `MessageExternal`. `WebSocketService` é um foreground service com socket aberto e já pede permissões de alarme. `Settings` guarda url, token e certificados em `SharedPreferences`.
+
+Não existe hoje: modelo de presença, endpoint de presença, detecção de sinal, UI de status, e nenhum código iOS no monorepo.
+
+## Conceito: presença ≠ incidente
+
+Os dois estados citados na reunião vivem em camadas diferentes e não se confundem:
+
+| | Alarme (existente) | Presença (nova) |
+| --- | --- | --- |
+| O que é | Um incidente por aplicativo, com prazo e repetição | Um estado contínuo por usuário |
+| Gatilho | Mensagem com prioridade ≥ limiar | Sinal do aparelho ou override manual |
+| Estados | `ringing → waiting → closed / expired` | `at_desk / away / unknown` |
+| Quem muda | Toque no botão (manual) | Detector + botão de override manual |
+| Efeito | Toca, para, reabre | Atualiza um badge e uma lista no time |
+
+Um mesmo usuário pode estar `away` no status e, ao mesmo tempo, com um incidente `waiting` no alarme — as coisas são independentes por decisão da reunião.
+
+## Regras de decisão
+
+Cada aparelho configura uma ou mais **fontes**. Uma fonte é um dos três detectores ou o override manual. O resultado é calculado sempre pelo mesmo algoritmo, que deve ser especificado uma vez e portado para Kotlin e Swift (testes com os mesmos vetores nos dois lados).
+
+<Callout id="rules" tone="info" title="Algoritmo padrão">
+
+1. Se existe **override manual** válido (`validUntil` no futuro), ele ganha e define o estado.
+2. Senão, se **alguma** fonte configurada reporta `at_desk`, o estado é `at_desk` (publicação imediata, com debounce curto de 10 s).
+3. Senão, se **todas** as fontes configuradas estão disponíveis e reportam `away`, o estado é `away` — mas só depois de `awayDebounceSeconds` (padrão 120) sem contradição, para não alternar quando a pessoa vai ao banheiro.
+4. Senão, `unknown`.
+
+Se nenhuma fonte está configurada, o estado é `unknown` e o app mostra só o override manual. Um sinal indisponível (Wi-Fi desligado, Bluetooth desligado, permissão de localização negada) conta como `unknown`, **nunca** como `away` — isso evita marcar "fora" quem apenas desligou o rádio.
+
+</Callout>
+
+O servidor aplica um TTL sobre o último `report`: se não chega atualização em `presenceTtlSeconds` (padrão 1800), o estado passa a `unknown` na leitura. Isso cobre aparelho desligado ou sem rede sem precisar de um job de expiração separado.
+
+## Modelo de dados
+
+<DataModel
+  id="presence-model"
+  title="Presença"
+  entities={[
+    {
+      id: "user",
+      name: "User",
+      note: "Tabela atual, sem alteração de colunas.",
+      fields: [
+        { name: "id", type: "uint", pk: true },
+        { name: "name", type: "string" }
+      ]
+    },
+    {
+      id: "presence",
+      name: "Presence",
+      change: "added",
+      fields: [
+        { name: "userId", type: "uint", pk: true, fk: "user.id" },
+        { name: "state", type: "string", note: "at_desk, away ou unknown" },
+        { name: "source", type: "string", note: "manual, location, wifi, bluetooth, mixed" },
+        { name: "detail", type: "string", nullable: true, note: "rótulo do sinal, ex.: SSID ou nome do geofence" },
+        { name: "reportedAt", type: "time", note: "último report recebido do aparelho" },
+        { name: "validUntil", type: "time", nullable: true, note: "TTL do report ou do override manual" }
+      ]
+    }
+  ]}
+  relations={[
+    { from: "user", to: "presence", kind: "1-1", label: "último estado" }
+  ]}
+/>
+
+`database.go` já roda `AutoMigrate` para os modelos do servo; `Presence` entra na mesma lista. Não há tabela de histórico nesta entrega.
+
+## Wire
+
+### Endpoints
+
+<Endpoint id="put-presence" method="PUT" path="/presence" summary="Publica a própria presença">
+
+Token de cliente ou sessão.basic; token de aplicativo recebe 403, mesma regra de `/incident`. Corpo: `{ "state": "at_desk", "source": "wifi", "detail": "wifi-do-escritorio", "validForSeconds": 1800 }`. O servidor calcula `reportedAt = agora` e `validUntil = agora + validForSeconds` (limitado a um teto de 4 h). Resposta: o objeto de presença gravado. O servidor transmite o frame para todos os clientes conectados.
+
+</Endpoint>
+
+<Endpoint id="get-presence" method="GET" path="/presence" summary="Lista a presença de todos os usuários">
+
+Qualquer usuário autenticado lê todos os estados (o Gotify já é um servidor compartilhado; não existe conceito de time nesta entrega). Usado na abertura do app e após reconectar o socket, como `GET /message` faz para mensagens. Estados com `validUntil` vencido são devolvidos como `unknown`.
+
+</Endpoint>
+
+### Stream sem quebrar cliente antigo
+
+`GET /stream` continua exatamente como hoje: frames são `MessageExternal` puro. O cliente que quer presença conecta em `GET /stream?presence=1`; nesse modo o servidor também envia frames discriminados:
+
+```
+{"type":"presence","data":{"userId":3,"state":"at_desk","source":"wifi","detail":"...","reportedAt":"...","validUntil":"..."}}
+```
+
+Mensagens não ganham campo `type`, então um cliente antigo que por acidente receber um frame de presença consegue descartá-lo pela ausência de `appid`/`date`. Na prática ele nunca recebe, porque não ativa o parâmetro. `stream.API.NotifyPresence` é novo e percorre todos os clientes (não só os de um `userID`, já que a presença é visível a todos).
+
+## Android
+
+Novo pacote `com.github.gotify.presence`, sem mexer em `alarm/`:
+
+- `PresenceState.kt` / `PresenceSignals.kt` — enums e dados dos sinais.
+- `PresenceEvaluator.kt` — função pura que implementa as regras acima; testável sem Android.
+- `PresenceReporter.kt` — Retrofit `PUT /presence` com o token já em `Settings`.
+- `PresenceMonitor.kt` — orquestra coleta, debounce e envio; roda dentro do ciclo de vida do `WebSocketService` (que já é foreground service) e usa `WorkManager` para uma verificação periódica quando o serviço não está ativo.
+- `WifiSignal.kt`, `BluetoothSignal.kt`, `LocationSignal.kt` — coletores.
+
+Detectores e restrições:
+
+| Sinal | API | Armadilha |
+| --- | --- | --- |
+| Wi-Fi | `ConnectivityManager` + `WifiManager.getConnectionInfo()` | SSID legível exige `ACCESS_FINE_LOCATION` no Android 10/11; em versões novas pode vir `<unknown ssid>`. Se não der para ler, sinal = `unknown`. |
+| Bluetooth | `BluetoothManager.getConnectedDevices()` (`BLUETOOTH_CONNECT`) | Só dispositivos pareados Vinculados; não confundir com varredura (`BLUETOOTH_SCAN`), que gasta bateria e não é necessária. |
+| Localização | `LocationManager` com `requestLocationUpdates` coarse + comparação de distância (haversine) | Sem Google Play Services: geofence é calculado no app. `addProximityAlert` é alternativa, mas é limitada e imprecisa. |
+
+Permissões novas no manifesto: `ACCESS_COARSE_LOCATION`, `ACCESS_FINE_LOCATION`, `ACCESS_WIFI_STATE`, `BLUETOOTH_CONNECT`, `FOREGROUND_SERVICE_LOCATION` (Android 14, porque o foreground service passa a ler localização). Solicitação em runtime com a lib `QuickPermissions-Kotlin` já presente.
+
+Configuração e UI:
+
+- Nova tela "Presença" em `SettingsActivity`: ligar/desligar, listar SSIDs, dispositivos Bluetooth pareados e geofences (com botão "usar localização atual"), além de `awayDebounceSeconds` e `presenceTtlSeconds`. Tudo em `SharedPreferences` via `Settings`.
+- `nav_header_drawer.xml` ganha um badge com o estado atual e um botão de override manual com duração (15 min / 1 h / até cancelar). O toque chama `PUT /presence` com `source=manual` e atualiza a UI na hora; o eco do socket é idempotente.
+- `WebSocketService` abre o socket com `?presence=1`; no `onOpen`, busca `GET /presence` para popular o estado inicial. Frames `type=presence` atualizam o badge sem virar notificação.
+
+## iOS
+
+Novo pacote `packages/ios` (SwiftUI, alvo iOS 17+), equivalente funcional do Android, mas com restrições próprias da plataforma:
+
+- `Sources/API` — `URLSessionWebSocketTask` conectando em `/stream?presence=1`, decodificação de `MessageExternal` (com `incident` opcional) e dos frames `type=presence`; `GET /presence` na abertura.
+- `Sources/Presence` — mesmo `PresenceEvaluator` em Swift, com os mesmos vetores de teste. Sinais: `CoreLocation` para geofences (limite de ~20 regiões monitoradas), `CoreBluetooth` para o dispositivo pareado/Vinculado e `NWPathMonitor` como sinal de disponibilidade. SSID de Wi-Fi no iOS exige entropy/entitlement (`NEHotspotNetwork` / `CNCopyCurrentNetworkInfo`) — fica **fora** desta entrega; o algoritmo lida com a fonte ausente como `unknown`.
+- `Sources/Alarm` — tela cheia via `UNUserNotificationCenter` com categoria de ações para os estágios. **Som critical alert exige entitlement da Apple**; sem ele, o fallback é notificação de prioridade alta + `UIWindow` sobreposta quando o app está em primeiro plano. Documentar o pedido do entitlement como tarefa externa.
+- `Sources/App` — `UIBackgroundModes` `location` e `bluetooth-central`; tela de ajustes (geofences, dispositivo, override manual) e badge de presença.
+- `Package.swift` / `.xcodeproj`, `Tests/` com XCTest para o avaliador e um teste de decode dos frames.
+
+<Callout id="ios-push" tone="warning" title="Risco conhecido no iOS">
+
+O Gotify não tem relay APNs. Sem push, o processo morto pelo sistema só volta quando o usuário abre o app — o mesmo problema em aberto do plano de alarme. Background location e Bluetooth ajudam, mas não substituem push. Registrado como risco, não bloqueio.
+
+</Callout>
+
+## Arquivos
+
+<FileTree
+  id="files"
+  title="Arquivos"
+  entries={[
+    { path: "packages/server/model/presence.go", change: "added", note: "Presence e os enums de estado/fonte" },
+    { path: "packages/server/api/presence.go", change: "added", note: "PUT/GET /presence, TTL na leitura" },
+    { path: "packages/server/api/presence_test.go", change: "added", note: "auth, TTL, visibilidade" },
+    { path: "packages/server/api/stream/stream.go", change: "modified", note: "NotifyPresence e modo presence=1" },
+    { path: "packages/server/database/database.go", change: "modified", note: "AutoMigrate de Presence" },
+    { path: "packages/server/router/router.go", change: "modified", note: "Registra as rotas e liga NotifyPresence" },
+    { path: "packages/server/ui/src/presence/Presence.tsx", change: "added", note: "Lista de presença do time" },
+    { path: "packages/android/app/src/main/AndroidManifest.xml", change: "modified", note: "Permissões de localização, Wi-Fi e Bluetooth" },
+    { path: "packages/android/app/src/main/kotlin/com/github/gotify/presence/", change: "added", note: "Avaliador, sinais, reporter e monitor" },
+    { path: "packages/android/app/src/main/kotlin/com/github/gotify/service/WebSocketService.kt", change: "modified", note: "Canal de presença no socket" },
+    { path: "packages/android/app/src/main/kotlin/com/github/gotify/settings/SettingsActivity.kt", change: "modified", note: "Tela de configuração de fontes" },
+    { path: "packages/android/app/src/main/kotlin/com/github/gotify/Settings.kt", change: "modified", note: "Chaves de config e override" },
+    { path: "packages/android/client/src/main/java/com/github/gotify/client/model/Presence.java", change: "added", note: "Modelo gerado pelo swagger, alinhado ao server" },
+    { path: "packages/ios/", change: "added", note: "App iOS completo (API, presença, alarme, UI, testes)" }
+  ]}
+/>
+
+## Fora desta entrega
+
+Avanço automático de estágio pelo detector (decisão da reunião: não faz), times/ACL para limitar quem vê a presença de quem, histórico de presença, SSID no iOS, relay APNs/FCM, regeneração completa do `go-api-client`. O override manual de "não estou no PC" é explícito e tem prazo — não é inferido de nenhum sinal.
+
+## Verificação
+
+Servidor, no estilo de `api/alarm_test.go`:
+
+- `PUT` com token de aplicativo responde 403
+- `GET` devolve `unknown` para `validUntil` vencido
+- `PUT` com `validForSeconds` acima do teto é limitado
+- `GET` de um usuário vê a presença de outro
+- cliente sem `presence=1` não recebe frame de presença; cliente com o parâmetro recebe
+
+Avaliador (mesmos vetores em Kotlin, Swift e, se quiser, Go):
+
+- manual vence todas as fontes
+- qualquer fonte `at_desk` já produz `at_desk`
+- todas as fontes `away` só produzem `away` depois do debounce
+- fonte indisponível nunca conta como `away`
+- nenhuma fonte configurada resulta em `unknown`
+
+Aparelho/simulador: publicar presença por Wi-Fi, trocar para geofence, desligar o rádio e conferir que não vira `away`, forçar override e ver o badge nos dois clientes conectados, matar e reabrir o app para conferir a recuperação via `GET /presence`.
+
+<Checklist
+  id="roadmap"
+  items={[
+    { id: "spec", label: "Fechar o contrato da API e os vetores do avaliador" },
+    { id: "server", label: "Modelo, rotas, TTL e testes de presença no server" },
+    { id: "stream", label: "Canal presence=1 no /stream e página de presença na UI web" },
+    { id: "android", label: "Avaliador, sinais e config no Android; teste de campo com Wi-Fi/BT/geofence" },
+    { id: "ios", label: "Scaffold do pacote iOS, API, presença, alarme e testes XCTest" },
+    { id: "entitlements", label: "Pedir entitlements de critical alert (e decidir push) na Apple" },
+    { id: "pilot", label: "Subir o servidor e rodar o piloto com o time" }
+  ]}
+/>
+
+<QuestionForm
+  id="open-questions"
+  title="Open Questions"
+  submitLabel="Registrar respostas"
+  questions={[
+    {
+      id: "visibility",
+      title: "Todos os usuários podem ver a presença de todos?",
+      subtitle: "Hoje o Gotify não tem times; a alternativa é adicionar um vínculo de compartilhamento.",
+      mode: "single",
+      options: [
+        { id: "all", label: "Sim, todos veem todos", detail: "Cabe no modelo atual, sem tabela nova de relacionamento.", recommended: true },
+        { id: "team", label: "Limitar por time", detail: "Exige nova tabela e decisão de quem administra os grupos." }
+      ]
+    },
+    {
+      id: "manual-duration",
+      title: "Quanto tempo dura o override manual padrão?",
+      subtitle: "O botão da reunião ('não tô no PC') precisa expirar sozinho para não ficar preso.",
+      mode: "single",
+      options: [
+        { id: "15", label: "15 minutos", detail: "Combina com idas curtas ao banheiro/café.", recommended: true },
+        { id: "60", label: "1 hora", detail: "Menos cliques para quem sai para almoço." },
+        { id: "cancel", label: "Até cancelar", detail: "Sem expiração; exige disciplina para reativar." }
+      ]
+    },
+    {
+      id: "ios-entitlement",
+      title: "O que fazer enquanto o entitlement de critical alert da Apple não chega?",
+      subtitle: "O alarme em tela cheia do iOS depende dele para tocar com volume de alarme.",
+      mode: "single",
+      options: [
+        { id: "fallback", label: "Seguir com fallback", detail: "Notificação de prioridade alta + overlay; pedir entitlement em paralelo.", recommended: true },
+        { id: "wait", label: "Esperar o entitlement", detail: "A entrega iOS fica bloqueada até a aprovação." }
+      ]
+    }
+  ]}
+/>

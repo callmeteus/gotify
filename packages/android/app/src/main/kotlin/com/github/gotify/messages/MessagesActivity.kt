@@ -48,12 +48,15 @@ import com.github.gotify.client.api.ClientApi
 import com.github.gotify.client.api.MessageApi
 import com.github.gotify.client.model.Application
 import com.github.gotify.client.model.Message
+import com.github.gotify.client.model.Presence
 import com.github.gotify.databinding.ActivityMessagesBinding
 import com.github.gotify.init.InitializationActivity
 import com.github.gotify.log.LogsActivity
 import com.github.gotify.login.LoginActivity
 import com.github.gotify.messages.provider.MessageState
 import com.github.gotify.messages.provider.MessageWithImage
+import com.github.gotify.presence.PresenceState
+import com.github.gotify.presence.PresenceStore
 import com.github.gotify.service.WebSocketService
 import com.github.gotify.settings.SettingsActivity
 import com.github.gotify.sharing.ShareActivity
@@ -77,7 +80,18 @@ internal class MessagesActivity :
 
     private val receiver: BroadcastReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context, intent: Intent) {
-            val messageJson = intent.getStringExtra("message")
+            val presenceJson = intent.getStringExtra("json")
+            if (presenceJson != null) {
+                val presence = Utils.JSON.fromJson(presenceJson, Presence::class.java)
+                renderPresence(PresenceState.fromWire(presence.state))
+                return
+            }
+            val state = intent.getStringExtra("state")
+            if (state != null) {
+                renderPresence(PresenceState.fromWire(state))
+                return
+            }
+            val messageJson = intent.getStringExtra("message") ?: return
             val message = Utils.JSON.fromJson(
                 messageJson,
                 Message::class.java
@@ -249,6 +263,33 @@ internal class MessagesActivity :
 
         val refreshAll = headerView.findViewById<ImageButton>(R.id.refresh_all)
         refreshAll.setOnClickListener { refreshAll() }
+
+        PresenceStore(this).current?.let { renderPresence(it.state) }
+        headerView.findViewById<View>(R.id.presence_at_desk).setOnClickListener {
+            startPresenceAction(WebSocketService.ACTION_PRESENCE_AT_DESK)
+            renderPresence(PresenceState.AT_DESK)
+        }
+        headerView.findViewById<View>(R.id.presence_away).setOnClickListener {
+            startPresenceAction(WebSocketService.ACTION_PRESENCE_AWAY)
+            renderPresence(PresenceState.AWAY)
+        }
+    }
+
+    private fun startPresenceAction(action: String) {
+        startService(Intent(this, WebSocketService::class.java).setAction(action))
+    }
+
+    private fun renderPresence(state: PresenceState) {
+        val label = getString(
+            when (state) {
+                PresenceState.AT_DESK -> R.string.presence_at_desk
+                PresenceState.AWAY -> R.string.presence_away
+                PresenceState.UNKNOWN -> R.string.presence_unknown
+            }
+        )
+        binding.navView.getHeaderView(0)
+            .findViewById<TextView>(R.id.header_presence)?.text =
+            getString(R.string.presence_state_label, label)
     }
 
     private fun addBackPressCallback() {
@@ -317,6 +358,7 @@ internal class MessagesActivity :
         nManager.cancelAll()
         val filter = IntentFilter()
         filter.addAction(WebSocketService.NEW_MESSAGE_BROADCAST)
+        filter.addAction(WebSocketService.NEW_PRESENCE_BROADCAST)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             registerReceiver(receiver, filter, RECEIVER_EXPORTED)
         } else {

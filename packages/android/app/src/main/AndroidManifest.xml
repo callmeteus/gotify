@@ -13,6 +13,11 @@
         tools:ignore="ProtectedPermissions" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
     <uses-permission android:name="android.permission.USE_FULL_SCREEN_INTENT" />
+    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
+    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
+    <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
+    <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_LOCATION" />
 
     <application
         android:name=".GotifyApplication"
@@ -92,7 +97,7 @@
 
         <service
             android:name=".service.WebSocketService"
-            android:foregroundServiceType="specialUse">
+            android:foregroundServiceType="specialUse|location">
             <property
                 android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
                 android:value="This is the main feature of this application. The foreground notification displays the connectivity status to the configurable remote server and the service notifies the user when a new message has been published on the remote server." />

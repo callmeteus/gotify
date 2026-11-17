@@ -138,4 +138,23 @@
     <string name="notification_channel_title_low">Low priority messages (1–3)</string>
     <string name="notification_channel_title_normal">Normal priority messages (4–7)</string>
     <string name="notification_channel_title_high">High priority messages (>7)</string>
+
+    <string name="presence_section">Presence</string>
+    <string name="presence_at_desk">I\'m at the PC</string>
+    <string name="presence_away">I\'m away</string>
+    <string name="presence_unknown">Presence unknown</string>
+    <string name="presence_manual_15m">Not at PC (15 min)</string>
+    <string name="presence_state_label">Status: %s</string>
+    <string name="setting_presence_enabled">Automatic presence</string>
+    <string name="setting_presence_enabled_summary">Detect and publish whether you are at the computer.</string>
+    <string name="setting_key_presence_enabled">presence_enabled</string>
+    <string name="presence_permission_missing">Location and Bluetooth permissions are needed for automatic presence.</string>
+    <string name="presence_wifi_title">Wi-Fi SSIDs</string>
+    <string name="presence_wifi_summary">Comma-separated SSIDs that mean you are at the PC.</string>
+    <string name="presence_bluetooth_title">Bluetooth devices</string>
+    <string name="presence_bluetooth_summary">Comma-separated device names that mean you are at the PC.</string>
+    <string name="presence_geofences_title">Geofences</string>
+    <string name="presence_geofences_summary">lat,lon,radiusInMeters separated by semicolons.</string>
+    <string name="presence_debounce_title">Away delay (seconds)</string>
+    <string name="presence_ttl_title">Report validity (seconds)</string>
 </resources>

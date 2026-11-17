@@ -98,6 +98,7 @@ func Create(db *database.GormDatabase, vInfo *model.VersionInfo, conf *config.Co
 		CrossOrigin:      http.NewCrossOriginProtection(),
 	}
 	alarmHandler := &api.AlarmAPI{DB: db, Notifier: streamHandler}
+	presenceHandler := &api.PresenceAPI{DB: db, Notifier: streamHandler}
 	stopAlarms := alarmHandler.Start()
 	messageHandler := api.MessageAPI{Notifier: streamHandler, DB: db, Alarms: alarmHandler}
 	healthHandler := api.HealthAPI{DB: db}
@@ -249,6 +250,12 @@ func Create(db *database.GormDatabase, vInfo *model.VersionInfo, conf *config.Co
 			message.GET("", messageHandler.GetMessages)
 			message.DELETE("", messageHandler.DeleteMessages)
 			message.DELETE("/:id", messageHandler.DeleteMessage)
+		}
+
+		presence := clientAuth.Group("/presence")
+		{
+			presence.GET("", presenceHandler.List)
+			presence.PUT("", presenceHandler.Put)
 		}
 
 		clientAuth.GET("/stream", streamHandler.Handle)

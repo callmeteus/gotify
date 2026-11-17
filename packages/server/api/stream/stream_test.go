@@ -100,6 +100,47 @@ func TestWritePingFails(t *testing.T) {
 	user.expectNoMessage()
 }
 
+func TestPresenceFrameOnlyForOptedInClients(t *testing.T) {
+	mode.Set(mode.TestDev)
+	defer leaktest.Check(t)()
+
+	server, api := bootTestServer(staticUserID())
+	defer server.Close()
+	defer api.Close()
+
+	optedIn, _, err := websocket.DefaultDialer.Dial(wsURL(server.URL)+"?presence=1", nil)
+	assert.NoError(t, err)
+	defer optedIn.Close()
+	legacy, _, err := websocket.DefaultDialer.Dial(wsURL(server.URL), nil)
+	assert.NoError(t, err)
+	defer legacy.Close()
+
+	waitForConnectedClients(api, 2)
+
+	api.NotifyPresence(&model.PresenceExternal{
+		UserID: 1,
+		State:  model.PresenceStateAtDesk,
+		Source: model.PresenceSourceWifi,
+	})
+
+	assert.NoError(t, optedIn.SetReadDeadline(time.Now().Add(time.Second)))
+	_, payload, err := optedIn.ReadMessage()
+	assert.NoError(t, err)
+	frame := map[string]json.RawMessage{}
+	assert.NoError(t, json.Unmarshal(payload, &frame))
+	assert.JSONEq(t, `"presence"`, string(frame["type"]))
+	assert.NotNil(t, frame["data"])
+	data := map[string]any{}
+	assert.NoError(t, json.Unmarshal(frame["data"], &data))
+	assert.Equal(t, float64(1), data["userId"])
+	assert.Equal(t, "at_desk", data["state"])
+	assert.Equal(t, "wifi", data["source"])
+
+	assert.NoError(t, legacy.SetReadDeadline(time.Now().Add(100*time.Millisecond)))
+	_, _, err = legacy.ReadMessage()
+	assert.Error(t, err)
+}
+
 func TestNotifyDoesNotPanicWhenClientIsClosed(t *testing.T) {
 	mode.Set(mode.TestDev)
 	defer leaktest.Check(t)()

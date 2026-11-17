@@ -93,6 +93,27 @@ func (a *API) Notify(userID uint, msg *model.MessageExternal) {
 	}
 }
 
+// NotifyPresence broadcasts a presence change to clients that opted in with ?presence=1.
+func (a *API) NotifyPresence(presence *model.PresenceExternal) {
+	if presence == nil {
+		return
+	}
+	frame := &model.PresenceFrame{Type: "presence", Data: presence}
+	a.lock.RLock()
+	defer a.lock.RUnlock()
+	for _, clients := range a.clients {
+		for _, c := range clients {
+			if !c.presence {
+				continue
+			}
+			select {
+			case c.write <- frame:
+			case <-c.closed:
+			}
+		}
+	}
+}
+
 func (a *API) remove(remove *client) {
 	a.lock.Lock()
 	defer a.lock.Unlock()
@@ -154,7 +175,7 @@ func (a *API) Handle(ctx *gin.Context) {
 	if c := auth.GetClient(ctx); c != nil {
 		token = c.Token
 	}
-	client := newClient(conn, auth.GetUserID(ctx), token, a.remove)
+	client := newClient(conn, auth.GetUserID(ctx), token, ctx.Query("presence") == "1", a.remove)
 	a.register(client)
 	go client.startReading(a.pongTimeout)
 	go client.startWriteHandler(a.pingPeriod)

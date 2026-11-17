@@ -1,5 +1,6 @@
 package com.github.gotify.settings
 
+import android.Manifest
 import android.app.Dialog
 import android.content.DialogInterface
 import android.content.Intent
@@ -11,6 +12,7 @@ import android.provider.Settings
 import android.view.MenuItem
 import android.view.View
 import androidx.appcompat.app.AppCompatActivity
+import androidx.core.app.ActivityCompat
 import androidx.core.net.toUri
 import androidx.preference.ListPreference
 import androidx.preference.ListPreferenceDialogFragmentCompat
@@ -64,7 +66,47 @@ internal class SettingsActivity :
                     sharedPreferences.getString(key, getString(R.string.theme_default))!!
                 )
             }
+            getString(R.string.setting_key_presence_enabled) -> {
+                if (sharedPreferences.getBoolean(key, false)) {
+                    requestPresencePermissions()
+                }
+                startService(
+                    Intent(this, WebSocketService::class.java).setAction(
+                        WebSocketService.ACTION_PRESENCE_REFRESH
+                    )
+                )
+            }
         }
+    }
+
+    private fun requestPresencePermissions() {
+        val permissions = mutableListOf(
+            Manifest.permission.ACCESS_COARSE_LOCATION,
+            Manifest.permission.ACCESS_FINE_LOCATION,
+            Manifest.permission.ACCESS_WIFI_STATE
+        )
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            permissions.add(Manifest.permission.BLUETOOTH_CONNECT)
+        }
+        ActivityCompat.requestPermissions(this, permissions.toTypedArray(), PRESENCE_PERMISSIONS)
+    }
+
+    override fun onRequestPermissionsResult(
+        requestCode: Int,
+        permissions: Array<out String>,
+        grantResults: IntArray
+    ) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+        if (requestCode == PRESENCE_PERMISSIONS) {
+            Utils.showSnackBar(
+                this,
+                getString(R.string.presence_permission_missing)
+            )
+        }
+    }
+
+    private companion object {
+        const val PRESENCE_PERMISSIONS = 4404
     }
 
     class SettingsFragment : PreferenceFragmentCompat() {

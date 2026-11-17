@@ -132,7 +132,7 @@ const waitForGotify = (url: string): Promise<void> =>
 const buildGoPlugin = (filename: string, pluginPath: string): Promise<void> => {
     process.stdout.write(`### Building Plugin ${pluginPath}\n`);
     return new Promise((resolve) =>
-        exec(`go build -o ${filename} -buildmode=plugin ${pluginPath}`, () => resolve())
+        exec(`go build -o "${filename}" -buildmode=plugin "${pluginPath}"`, () => resolve())
     );
 };
 
@@ -148,7 +148,7 @@ const buildGoExecutable = (filename: string): Promise<void> => {
     } else {
         process.stdout.write(`### Building Gotify ${filename}\n`);
         return new Promise((resolve) =>
-            exec(`go build -ldflags="-X main.Mode=prod" -o ${filename} ${appDotGo}`, () =>
+            exec(`go build -ldflags="-X main.Mode=prod" -o "${filename}" "${appDotGo}"`, () =>
                 resolve()
             )
         );

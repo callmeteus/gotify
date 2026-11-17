@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -63,6 +64,36 @@ func (s *IntegrationSuite) TestVersionInfo() {
 	req := s.newRequest("GET", "version", "")
 
 	doRequestAndExpect(s.T(), req, 200, `{"version":"1.0.0", "commit":"asdasds", "buildDate":"2018-02-20-17:30:47"}`)
+}
+
+func (s *IntegrationSuite) TestPresenceRoutes() {
+	clientToken := s.db.User(1).NewClientWithToken(1, "Cpresence")
+	req := s.newRequest("PUT", "presence", `{"state":"at_desk","source":"wifi","detail":"office","validForSeconds":600}`)
+	req.Header.Set("X-Gotify-Key", clientToken.Token)
+	res, err := client.Do(req)
+	assert.NoError(s.T(), err)
+	assert.Equal(s.T(), 200, res.StatusCode)
+	putBody, err := io.ReadAll(res.Body)
+	assert.NoError(s.T(), err)
+	assert.Contains(s.T(), string(putBody), `"state":"at_desk"`)
+	assert.Contains(s.T(), string(putBody), `"detail":"office"`)
+	res.Body.Close()
+
+	req = s.newRequest("GET", "presence", "")
+	req.Header.Set("X-Gotify-Key", clientToken.Token)
+	res, err = client.Do(req)
+	assert.NoError(s.T(), err)
+	assert.Equal(s.T(), 200, res.StatusCode)
+	body, err := io.ReadAll(res.Body)
+	assert.NoError(s.T(), err)
+	assert.Contains(s.T(), string(body), `"userId":1`)
+	res.Body.Close()
+
+	app := s.db.User(1).NewAppWithToken(7, "Apresence")
+	req = s.newRequest("PUT", "presence", `{"state":"at_desk","source":"wifi"}`)
+	req.Header.Set("X-Gotify-Key", app.Token)
+	// The client-auth middleware rejects application tokens before the handler runs.
+	doRequestAndExpect(s.T(), req, 401, `{"error":"Unauthorized","errorCode":401,"errorDescription":"you need to provide a valid access token or user credentials to access this api"}`)
 }
 
 func (s *IntegrationSuite) TestGotifyInfo() {

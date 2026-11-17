@@ -9,6 +9,8 @@ import com.github.gotify.SSLSettings
 import com.github.gotify.Utils
 import com.github.gotify.api.CertUtils
 import com.github.gotify.client.model.Message
+import com.github.gotify.client.model.Presence
+import com.github.gotify.client.model.PresenceFrame
 import java.util.Calendar
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicLong
@@ -44,6 +46,7 @@ internal class WebSocketConnection(
 
     private var webSocket: WebSocket? = null
     private lateinit var onMessageCallback: (Message) -> Unit
+    private var onPresenceCallback: ((Presence) -> Unit)? = null
     private lateinit var onClose: Runnable
     private lateinit var onOpen: Runnable
     private lateinit var onFailure: OnNetworkFailureRunnable
@@ -62,6 +65,12 @@ internal class WebSocketConnection(
     @Synchronized
     fun onMessage(onMessage: (Message) -> Unit): WebSocketConnection {
         this.onMessageCallback = onMessage
+        return this
+    }
+
+    @Synchronized
+    fun onPresence(onPresence: (Presence) -> Unit): WebSocketConnection {
+        this.onPresenceCallback = onPresence
         return this
     }
 
@@ -94,6 +103,7 @@ internal class WebSocketConnection(
             .newBuilder()
             .addPathSegment("stream")
             .addQueryParameter("token", token)
+            .addQueryParameter("presence", "1")
             .build()
         return Request.Builder().url(url).get().build()
     }
@@ -185,8 +195,12 @@ internal class WebSocketConnection(
         override fun onMessage(webSocket: WebSocket, text: String) {
             syncExec(id) {
                 Logger.info("WebSocket($id): received message $text")
-                val message = Utils.JSON.fromJson(text, Message::class.java)
-                onMessageCallback(message)
+                val frame = Utils.JSON.fromJson(text, PresenceFrame::class.java)
+                if (frame.isPresence()) {
+                    onPresenceCallback?.invoke(frame.data!!)
+                } else {
+                    onMessageCallback(Utils.JSON.fromJson(text, Message::class.java))
+                }
             }
             super.onMessage(webSocket, text)
         }

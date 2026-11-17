@@ -35,11 +35,16 @@ import com.github.gotify.client.api.ApplicationApi
 import com.github.gotify.client.api.MessageApi
 import com.github.gotify.client.model.Application
 import com.github.gotify.client.model.Message
+import com.github.gotify.client.model.Presence
 import com.github.gotify.log.LoggerHelper
 import com.github.gotify.log.UncaughtExceptionHandler
 import com.github.gotify.messages.Extras
 import com.github.gotify.messages.IntentUrlDialogActivity
 import com.github.gotify.messages.MessagesActivity
+import com.github.gotify.presence.PresenceApi
+import com.github.gotify.presence.PresenceMonitor
+import com.github.gotify.presence.PresenceState
+import com.github.gotify.presence.PresenceStore
 import io.noties.markwon.Markwon
 import java.time.OffsetDateTime
 import java.util.concurrent.ConcurrentHashMap
@@ -55,6 +60,12 @@ internal class WebSocketService : Service() {
     companion object {
         private val castAddition = if (BuildConfig.DEBUG) ".DEBUG" else ""
         val NEW_MESSAGE_BROADCAST = "${WebSocketService::class.java.name}.NEW_MESSAGE$castAddition"
+        val NEW_PRESENCE_BROADCAST = "${WebSocketService::class.java.name}.NEW_PRESENCE$castAddition"
+        const val ACTION_PRESENCE_AT_DESK = "com.github.gotify.presence.AT_DESK"
+        const val ACTION_PRESENCE_AWAY = "com.github.gotify.presence.AWAY"
+        const val ACTION_PRESENCE_CLEAR = "com.github.gotify.presence.CLEAR"
+        const val ACTION_PRESENCE_REFRESH = "com.github.gotify.presence.REFRESH"
+        private const val MANUAL_AWAY_DURATION_MS = 15 * 60 * 1000L
         private const val NOT_LOADED = -2L
     }
 
@@ -81,9 +92,13 @@ internal class WebSocketService : Service() {
 
     private lateinit var markwon: Markwon
 
+    private lateinit var presenceStore: PresenceStore
+    private var presenceMonitor: PresenceMonitor? = null
+
     override fun onCreate() {
         super.onCreate()
         settings = Settings(this)
+        presenceStore = PresenceStore(this)
         val client = ClientFactory.clientToken(settings)
         missingMessageUtil = MissedMessageUtil(client.createService(MessageApi::class.java))
         Logger.info("Create ${javaClass.simpleName}")
@@ -92,6 +107,7 @@ internal class WebSocketService : Service() {
 
     override fun onDestroy() {
         AlarmController.stop(this)
+        presenceMonitor?.stop()
         super.onDestroy()
         connection?.close()
 
@@ -107,6 +123,33 @@ internal class WebSocketService : Service() {
         if (intent?.action == AlarmController.ACTION_REPEAT && connection != null) {
             AlarmController.onRepeat(this)
             return START_STICKY
+        }
+
+        when (intent?.action) {
+            ACTION_PRESENCE_AT_DESK -> {
+                ensurePresenceMonitor().setManual(PresenceState.AT_DESK, MANUAL_AWAY_DURATION_MS)
+                if (connection == null) stopSelf(startId)
+                return START_STICKY
+            }
+            ACTION_PRESENCE_AWAY -> {
+                ensurePresenceMonitor().setManual(PresenceState.AWAY, MANUAL_AWAY_DURATION_MS)
+                if (connection == null) stopSelf(startId)
+                return START_STICKY
+            }
+            ACTION_PRESENCE_CLEAR -> {
+                ensurePresenceMonitor().setManual(null, 0L)
+                if (connection == null) stopSelf(startId)
+                return START_STICKY
+            }
+            ACTION_PRESENCE_REFRESH -> {
+                if (presenceStore.enabled) {
+                    ensurePresenceMonitor().start()
+                } else {
+                    presenceMonitor?.stop()
+                }
+                if (connection == null) stopSelf(startId)
+                return START_STICKY
+            }
         }
 
         connection?.close()
@@ -150,6 +193,7 @@ internal class WebSocketService : Service() {
             .onClose { onClose() }
             .onFailure { status, reconnectIn -> onFailure(status, reconnectIn) }
             .onMessage { message -> onMessage(message) }
+            .onPresence { presence -> broadcastPresence(presence) }
             .onReconnected { notifyMissedNotifications() }
             .start()
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
@@ -223,6 +267,38 @@ internal class WebSocketService : Service() {
     private fun onOpen() {
         showForegroundNotification(getString(R.string.websocket_listening))
         restoreIncidents()
+        restorePresence()
+    }
+
+    private fun restorePresence() {
+        if (!presenceStore.enabled) return
+        ClientFactory.clientToken(settings)
+            .createService(PresenceApi::class.java)
+            .list()
+            .enqueue(
+                Callback.call(
+                    onSuccess = Callback.SuccessBody { presences ->
+                        presences.forEach { broadcastPresence(it) }
+                    }
+                )
+            )
+        ensurePresenceMonitor().start()
+    }
+
+    private fun ensurePresenceMonitor(): PresenceMonitor {
+        return presenceMonitor ?: PresenceMonitor(this, settings, presenceStore) { decision ->
+            val intent = Intent(NEW_PRESENCE_BROADCAST)
+            intent.setPackage(packageName)
+            intent.putExtra("state", decision.state.wire)
+            sendBroadcast(intent)
+        }.also { presenceMonitor = it }
+    }
+
+    private fun broadcastPresence(presence: Presence) {
+        val intent = Intent(NEW_PRESENCE_BROADCAST)
+        intent.setPackage(packageName)
+        intent.putExtra("json", Utils.JSON.toJson(presence))
+        sendBroadcast(intent)
     }
 
     private fun restoreIncidents() {

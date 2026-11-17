@@ -1,0 +1,247 @@
+---
+title: Alarmes com estágios no Gotify
+version: 2
+localOnly: true
+---
+
+Às 03:12 o monitor publica no aplicativo Backup Server com prioridade 8. O telefone acende em tela cheia, no volume de alarme, com o botão **I'm up**. O toque para. Começa um prazo de 10 minutos. Se esse prazo acaba sem o segundo toque, o alarme volta do início. **I'm at my computer** encerra o incidente.
+
+O comportamento vem da documentação pública do [Crit Alarm](https://critalarm.app/how-it-works/) (incidente, dois toques, prazo, repetição). O código deles não entra neste repositório: o servidor é AGPL-3.0 e o app é GPL-3.0, e o Gotify é MIT. A entrega reimplementa o fluxo em cima do que o Gotify já faz.
+
+<Callout id="decision-fork" tone="decision" title="Onde isso vive">
+
+O incidente fica no `packages/server`, na mesma base do Gotify, e o Android em `packages/android` só mostra o alarme e avança estágio. Publicar mensagem continua `POST /message`, com prioridade de 0 a 10. O alarme só existe quando o aplicativo tem a opção ligada e a prioridade da mensagem é maior ou igual ao limiar (padrão 8, a mesma faixa que o Android já trata como importância alta em `NotificationSupport.convertPriorityToChannel`). iOS fica fora desta entrega. Não há pacote iOS neste monorepo.
+
+</Callout>
+
+## O que já existe
+
+O Gotify guarda a mensagem e avisa o usuário no WebSocket. O gancho é `MessageAPI.createMessage` em [packages/server/api/message.go](packages/server/api/message.go): preenche a prioridade padrão do aplicativo, grava e chama `Notifier.Notify`. O frame do socket é o próprio `MessageExternal`. Cliente antigo ignora campo JSON desconhecido.
+
+No Android, `WebSocketService` é um serviço em primeiro plano que já tem `SCHEDULE_EXACT_ALARM`, `RECEIVE_BOOT_COMPLETED` e o `BootCompletedReceiver`. A notificação de mensagem é montada em `showNotification`, e a lista descarta um id que já chegou (`MessageStateHolder.newMessage`). Não existe tela cheia, canal de alarme nem `USE_FULL_SCREEN_INTENT`.
+
+## Máquina de estados
+
+Um aplicativo com alarme ligado tem no máximo um incidente ativo (`ringing` ou `waiting`). Mensagem abaixo do limiar segue o caminho normal, sem incidente.
+
+<Diagram id="incident-states" caption="Estados do incidente. O prazo estourado volta para ringing, não para o estágio pulado." frame="show">
+
+```html
+<div class="diagram-panel" style="display:grid;grid-template-columns:1fr 1fr;gap:16px;padding:16px">
+  <div class="diagram-box">
+    <p class="diagram-muted">ringing</p>
+    <p>Tela cheia e som no volume de alarme até o primeiro estágio, ou até maxRing.</p>
+  </div>
+  <div class="diagram-box">
+    <p class="diagram-muted">waiting</p>
+    <p>Som parado. Prazo do estágio concluído. O botão mostra o próximo rótulo.</p>
+  </div>
+  <div class="diagram-box">
+    <p class="diagram-muted">closed</p>
+    <p>Último estágio confirmado. Um publish novo abre outro incidente.</p>
+  </div>
+  <div class="diagram-box">
+    <p class="diagram-muted">expired</p>
+    <p>ringing passou de maxRing sem nenhum estágio. Para de tocar.</p>
+  </div>
+</div>
+```
+
+</Diagram>
+
+Estágios são uma lista ordenada no aplicativo. O padrão, editável, é o do Crit Alarm:
+
+| Posição | Rótulo | Prazo para o próximo |
+| --- | --- | --- |
+| 0 | I'm up | 600 segundos |
+| 1 | I'm at my computer | 0, este toque encerra |
+
+Com o alarme ligado, a lista tem pelo menos dois estágios. Todo estágio que não é o último tem `advanceWithinSeconds` maior que zero. Estourar o prazo zera o progresso e reabre em `ringing`, com `ringUntil` novo (`agora + maxRingSeconds`, padrão 1800). Enquanto toca, o aparelho repete o som a cada `repeatIntervalSeconds` (padrão 30) até `ringUntil`.
+
+Mensagem nova com prioridade suficiente, com incidente ainda `ringing` ou `waiting`, entra no mesmo incidente e atualiza título e texto. Em `waiting` ela não volta a tocar. Monitor que pisca não empilha alarme.
+
+<DataModel
+  id="alarm-model"
+  title="Tabelas novas"
+  entities={[
+    {
+      id: "application",
+      name: "Application",
+      note: "Tabela atual. Ganha um objeto alarm no JSON, sem mudar prioridade 0-10.",
+      fields: [
+        { name: "id", type: "uint", pk: true },
+        { name: "defaultPriority", type: "int" }
+      ]
+    },
+    {
+      id: "alarm",
+      name: "ApplicationAlarm",
+      change: "added",
+      fields: [
+        { name: "applicationId", type: "uint", pk: true, fk: "application.id" },
+        { name: "enabled", type: "bool", default: "false" },
+        { name: "priorityThreshold", type: "int", default: "8" },
+        { name: "repeatIntervalSeconds", type: "int", default: "30" },
+        { name: "maxRingSeconds", type: "int", default: "1800" },
+        { name: "stages", type: "json", note: "label + advanceWithinSeconds, em ordem" }
+      ]
+    },
+    {
+      id: "incident",
+      name: "Incident",
+      change: "added",
+      fields: [
+        { name: "id", type: "uint", pk: true },
+        { name: "applicationId", type: "uint", fk: "application.id" },
+        { name: "state", type: "string", note: "ringing, waiting, closed, expired" },
+        { name: "currentStage", type: "int", note: "-1 enquanto ringing antes do primeiro toque" },
+        { name: "messageId", type: "uint", fk: "message.id" },
+        { name: "stageDeadlineAt", type: "time", nullable: true },
+        { name: "ringUntil", type: "time", nullable: true },
+        { name: "openedAt", type: "time" }
+      ]
+    }
+  ]}
+  relations={[
+    { from: "application", to: "alarm", kind: "1-1", label: "config" },
+    { from: "application", to: "incident", kind: "1-n", label: "histórico, um ativo" }
+  ]}
+/>
+
+`database.go` já faz `AutoMigrate` de `User`, `Application`, `Message`, `Client` e `PluginConf`. Os dois modelos novos entram nessa lista. O relógio do servidor lê `stageDeadlineAt` e `ringUntil` no banco, num loop curto iniciado em [packages/server/runner/runner.go](packages/server/runner/runner.go), para um restart continuar do prazo gravado.
+
+## Wire
+
+O `POST /message` não muda para quem publica. A resposta e o frame do WebSocket ganham `incident` só quando um incidente abre ou é atualizado. Repetição local do som não republica a mensagem: o id antigo seria ignorado pela lista (`lastReceivedMessage`) e mesmo assim dispararia `showNotification` de novo.
+
+`advance`, `close`, `expire` e `reopen` republicam o mesmo `MessageExternal`, com `incident.kind` novo. O serviço Android trata esse frame antes da lista. A lista continua descartando id repetido, então o histórico não duplica. `WebSocketService.onOpen` busca os incidentes ativos, porque o `GET /message` de recuperação não carrega esse objeto.
+
+<Endpoint id="advance" method="POST" path="/incident/{id}/advance" summary="Confirma o próximo estágio">
+
+Exige o token de cliente do usuário dono, o mesmo tipo de sessão que lê mensagens. O token do aplicativo recebe 403: quem publica o alerta não encerra o incidente.
+
+Corpo: `{ "stage": 0 }`, índice do estágio que o botão mostra. 409 se o índice não é o próximo, ou se o estado não aceita o toque (`ringing` só aceita o estágio 0, `waiting` só aceita `currentStage + 1`).
+
+Resposta: o incidente. No último estágio, `state` fica `closed`. Nos anteriores, `state` fica `waiting` e `stageDeadlineAt` é agora mais o prazo daquele estágio.
+
+</Endpoint>
+
+<Endpoint id="list-incidents" method="GET" path="/incident" summary="Incidentes ativos deste usuário">
+
+Query `state=ringing` ou `state=waiting`. Sem query, devolve os dois. Usado quando o serviço sobe, no boot e depois de reconectar o socket. Cada item traz os estágios, `ringUntil`, `stageDeadlineAt`, título e texto da última mensagem.
+
+</Endpoint>
+
+<AnnotatedCode
+  id="create-message-hook"
+  filename="packages/server/api/message.go"
+  language="go"
+  code={"func (a *MessageAPI) createMessage(app *model.Application, message *model.CreateMessage) (*model.MessageExternal, error) {\n    // prioridade padrão e CreateMessage, como hoje\n    created := toExternalMessage(msgInternal)\n    incident := a.Alarms.OnMessage(app, created)\n    if incident != nil {\n        created.Incident = incident\n    }\n    a.Notifier.Notify(app.UserID, created)\n    return created, nil\n}"}
+  annotations={[
+    { lines: "4", label: "Depois de gravar", note: "OnMessage abre, junta ou ignora. Não muda mensagem abaixo do limiar." },
+    { lines: "5-8", label: "Campo aditivo", note: "incident sai no JSON do POST e no frame do /stream. Cliente antigo ignora a chave." }
+  ]}
+/>
+
+## Android
+
+`WebSocketService.showNotification` segue para prioridade normal. Se `incident.kind` é `open`, `repeat` ou `reopen`, o serviço abre `AlarmActivity` (tela cheia, `showWhenLocked`, `turnScreenOn`) e arma um `AlarmManager` exato com o intervalo de repetição, atributo de áudio `USAGE_ALARM`. `advance` e `close` param o som e trocam a tela. `expire` só para.
+
+O manifesto ganha `USE_FULL_SCREEN_INTENT`. No Android 14, se `canUseFullScreenIntent()` for falso, a atividade de configuração manda o usuário para a tela do sistema. Sem essa permissão o alerta cai na notificação de prioridade alta que o Gotify já sabe fazer.
+
+O botão da tela é o rótulo do próximo estágio. O toque chama `POST /incident/{id}/advance` e, na hora, atualiza a UI. O eco do socket no mesmo aparelho é idempotente.
+
+A configuração dos estágios fica na UI web do servidor, em [packages/server/ui/src/application/UpdateApplicationDialog.tsx](packages/server/ui/src/application/UpdateApplicationDialog.tsx), ao lado de nome, descrição e prioridade padrão. O telefone não edita a lista.
+
+<FileTree
+  id="files"
+  title="Arquivos"
+  entries={[
+    { path: "packages/server/model/alarm.go", change: "added", note: "ApplicationAlarm, estágio e incidente" },
+    { path: "packages/server/api/alarm.go", change: "added", note: "OnMessage, advance, prazos" },
+    { path: "packages/server/api/message.go", change: "modified", note: "Chama OnMessage antes do Notify" },
+    { path: "packages/server/api/stream/stream.go", change: "modified", note: "O frame continua sendo a mensagem, agora com incident" },
+    { path: "packages/server/database/database.go", change: "modified", note: "AutoMigrate dos modelos novos" },
+    { path: "packages/server/runner/runner.go", change: "modified", note: "Loop que promove prazo vencido" },
+    { path: "packages/server/ui/src/application/UpdateApplicationDialog.tsx", change: "modified", note: "Liga o alarme e edita os estágios" },
+    { path: "packages/android/app/src/main/AndroidManifest.xml", change: "modified", note: "USE_FULL_SCREEN_INTENT e AlarmActivity" },
+    { path: "packages/android/app/src/main/kotlin/com/github/gotify/alarm/AlarmActivity.kt", change: "added" },
+    { path: "packages/android/app/src/main/kotlin/com/github/gotify/service/WebSocketService.kt", change: "modified", note: "Separa incidente de notificação comum" },
+    { path: "packages/android/client/src/main/java/com/github/gotify/client/model/Message.java", change: "modified", note: "Campo incident. O go-api-client gerado fica para uma rodada seguinte." }
+  ]}
+/>
+
+## Fora desta entrega
+
+Cliente iOS, relay APNs, conta Crit Alarm, teto de tópicos e prioridade no estilo 1 a 5. O `packages/go-api-client` não é regenerado agora. Acordar o processo depois que o fabricante mata o serviço, por FCM, fica em aberto no fim do plano. Enquanto isso, o caminho de volta é o que o Gotify já tem: boot, alarme exato e o serviço em primeiro plano, que ao abrir o socket pede `GET /incident`.
+
+## Verificação
+
+Testes em `packages/server/api`, no estilo de `message_test.go`:
+
+- prioridade abaixo do limiar não cria incidente
+- prioridade no limiar, com alarme desligado, não cria incidente
+- a primeira mensagem qualificada abre `ringing` e a segunda no mesmo aplicativo junta, sem segundo incidente
+- `advance` no estágio 0 vai para `waiting` com prazo; estágio errado responde 409
+- prazo vencido volta para `ringing` com `ringUntil` novo
+- último estágio fecha; token de aplicativo no `advance` responde 403
+- `ringing` além de `maxRing` expira e para
+
+No Android não há testes unitários no repositório. A verificação do aparelho é um emulador ou telefone com o servidor local: publicar prioridade 8, ver a tela cheia, tocar **I'm up**, forçar o prazo no servidor, ver o alarme voltar, tocar **I'm at my computer** e confirmar silêncio nos dois clientes se houver dois conectados. Sem a permissão de tela cheia, a mesma mensagem aparece como notificação alta e não como activity.
+
+<Checklist
+  id="build-order"
+  items={[
+    { id: "model", label: "Modelos, AutoMigrate e OnMessage com testes de abrir, juntar, prazo e 409" },
+    { id: "wire", label: "Campo incident no MessageExternal e no cliente Java do Android" },
+    { id: "scheduler", label: "Loop de prazo no runner, retomando depois de reiniciar o processo" },
+    { id: "android", label: "AlarmActivity, áudio de alarme, AlarmManager e permissão de tela cheia" },
+    { id: "web", label: "UpdateApplicationDialog com alarme, limiar, repetição e lista de estágios" },
+    { id: "device", label: "Correr o fluxo no emulador, inclusive prazo estourado e segundo cliente" }
+  ]}
+/>
+
+<QuestionForm
+  id="open-questions"
+  title="Open Questions"
+  submitLabel="Registrar respostas"
+  questions={[
+    {
+      id: "killed-process",
+      title: "Se o Android matar o processo, como o alarme volta nesta entrega?",
+      subtitle: "O Gotify não tem FCM. O Crit Alarm acorda o telefone por push de alta prioridade.",
+      mode: "single",
+      options: [
+        {
+          id: "socket",
+          label: "Serviço atual, boot e GET /incident",
+          detail: "Cabe no que o app já faz. Falha se o fabricante impedir o serviço de subir de novo.",
+          recommended: true
+        },
+        {
+          id: "fcm",
+          label: "Incluir FCM nesta mesma entrega",
+          detail: "Cobre o processo morto. Exige projeto Firebase, token e um caminho de push que o servidor Gotify não tem."
+        }
+      ]
+    },
+    {
+      id: "join-while-waiting",
+      title: "Mensagem nova enquanto o incidente está em waiting",
+      mode: "single",
+      options: [
+        {
+          id: "join-silent",
+          label: "Junta e não toca de novo",
+          detail: "O monitor que pisca não desfaz o I'm up. O texto na tela atualiza.",
+          recommended: true
+        },
+        {
+          id: "rering",
+          label: "Volta a tocar na hora",
+          detail: "Trata a mensagem nova como piora do incidente, mesmo depois do primeiro estágio."
+        }
+      ]
+    }
+  ]}
+/>

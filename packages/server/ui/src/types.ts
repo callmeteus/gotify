@@ -25,6 +25,15 @@ export interface IAlarmConfig {
     stages: IAlarmStage[];
 }
 
+export interface IPresence {
+    userId: number;
+    state: 'at_desk' | 'away' | 'unknown';
+    source: string;
+    detail?: string;
+    reportedAt: string;
+    validUntil?: string;
+}
+
 export interface IClient {
     id: number;
     token: string;

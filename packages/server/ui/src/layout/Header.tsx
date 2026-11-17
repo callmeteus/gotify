@@ -6,6 +6,7 @@ import {makeStyles} from 'tss-react/mui';
 import Toolbar from '@mui/material/Toolbar';
 import Typography from '@mui/material/Typography';
 import AccountCircle from '@mui/icons-material/AccountCircle';
+import MyLocation from '@mui/icons-material/MyLocation';
 import Chat from '@mui/icons-material/Chat';
 import DevicesOther from '@mui/icons-material/DevicesOther';
 import ExitToApp from '@mui/icons-material/ExitToApp';
@@ -146,6 +147,9 @@ const Buttons = ({
             </Link>
             <Link className={classes.link} to="/plugins" id="navigate-plugins">
                 <ResponsiveButton icon={<Apps />} label="plugins" color="inherit" />
+            </Link>
+            <Link className={classes.link} to="/presence" id="navigate-presence">
+                <ResponsiveButton icon={<MyLocation />} label="presence" color="inherit" />
             </Link>
             <ResponsiveButton
                 icon={<AccountCircle />}

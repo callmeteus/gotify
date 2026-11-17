@@ -1,0 +1,13 @@
+<Prototype title="Do toque ao silêncio" brief="O link do prazo existe só nesta prévia, para disparar a reabertura." surface="mobile" initialScreenId="ringing">
+  <PrototypeScreen id="ringing" title="Tocando" summary="Tela cheia no volume de alarme. O botão é o primeiro estágio." surface="mobile" html={"<div style='display:flex;flex-direction:column;height:100%;padding:20px;gap:14px'><div class='wf-card' style='background:var(--wf-warn)'><p>03:12 · Backup Server</p><h1>Backup failed</h1><p>nas-backup exited 1</p></div><p class='wf-muted'>Toca de novo a cada 30 segundos, no volume de alarme, até 03:42.</p><div style='flex:1'></div><button class='primary' data-goto='waiting'>I'm up</button></div>"} />
+
+  <PrototypeScreen id="waiting" title="I'm up" summary="Som parado. O prazo visível é o do estágio confirmado." surface="mobile" html={"<div style='display:flex;flex-direction:column;height:100%;padding:20px;gap:14px'><span class='wf-pill accent'>I'm up</span><h1>Backup failed</h1><p class='wf-muted'>nas-backup exited 1</p><div class='wf-card'><p>Prazo para o próximo estágio</p><h2>09:12</h2><small>Se acabar, o alarme volta do início.</small></div><div style='flex:1'></div><button class='primary' data-goto='closed'>I'm at my computer</button><a href='#' data-goto='reopened'>Prazo estourou</a></div>"} />
+
+  <PrototypeScreen id="reopened" title="Tocando de novo" summary="O prazo acabou. O incidente volta para ringing e o primeiro estágio reaparece." surface="mobile" html={"<div style='display:flex;flex-direction:column;height:100%;padding:20px;gap:14px'><div class='wf-card' style='background:var(--wf-warn)'><p>03:22 · Backup Server</p><h1>Backup failed</h1><p>nas-backup exited 1</p></div><p class='wf-muted'>O prazo de I'm up acabou. O alarme recomeçou.</p><div style='flex:1'></div><button class='primary' data-goto='waiting'>I'm up</button></div>"} />
+
+  <PrototypeScreen id="closed" title="Encerrado" summary="Último estágio. Não há botão de alarme." surface="mobile" html={"<div style='display:flex;flex-direction:column;height:100%;padding:28px;gap:12px'><span class='wf-pill'>Fechado</span><h1>Incidente encerrado</h1><p>Backup failed</p><p class='wf-muted'>I'm at my computer às 03:21. O telefone ficou em silêncio.</p></div>"} />
+
+  <PrototypeTransition id="ack" from="ringing" to="waiting" label="I'm up" trigger="Toque no primeiro estágio" />
+  <PrototypeTransition id="desk" from="waiting" to="closed" label="I'm at my computer" trigger="Toque no último estágio" />
+  <PrototypeTransition id="deadline" from="waiting" to="reopened" label="Prazo" trigger="stageDeadlineAt vencido" />
+</Prototype>

@@ -1,0 +1,28 @@
+{/* Canvas source. */}
+
+<DesignBoard title="Alarme no telefone e no servidor" version={2}>
+  <Section id="phone" title="Telefone" subtitle="Um incidente, dois estágios padrão">
+    <Artboard id="ringing" label="Tocando" surface="mobile" x={80} y={80}>
+      <Screen surface="mobile" html={"<div style='display:flex;flex-direction:column;height:100%;padding:20px;gap:14px'><div class='wf-card' style='background:var(--wf-warn)'><p>03:12 · Backup Server</p><h1>Backup failed</h1><p>nas-backup exited 1</p></div><p class='wf-muted'>Toca de novo a cada 30 segundos, no volume de alarme, até 03:42.</p><div style='flex:1'></div><button class='primary'>I'm up</button></div>"} />
+    </Artboard>
+    <Artboard id="waiting" label="I'm up" surface="mobile" x={1080} y={80}>
+      <Screen surface="mobile" html={"<div style='display:flex;flex-direction:column;height:100%;padding:20px;gap:14px'><span class='wf-pill accent'>I'm up</span><h1>Backup failed</h1><p class='wf-muted'>nas-backup exited 1</p><div class='wf-card'><p>Prazo para o próximo estágio</p><h2>09:12</h2><small>Se acabar, o alarme volta do início.</small></div><div style='flex:1'></div><button class='primary'>I'm at my computer</button></div>"} />
+    </Artboard>
+    <Artboard id="closed" label="Encerrado" surface="mobile" x={2080} y={80}>
+      <Screen surface="mobile" html={"<div style='display:flex;flex-direction:column;height:100%;padding:28px;gap:12px'><span class='wf-pill'>Fechado</span><h1>Incidente encerrado</h1><p>Backup failed</p><p class='wf-muted'>I'm at my computer às 03:21. O telefone ficou em silêncio.</p></div>"} />
+    </Artboard>
+  </Section>
+
+  <Section id="server-ui" title="Servidor" subtitle="Quem opera o Gotify configura o aplicativo">
+    <Artboard id="app-settings" label="Aplicativo" surface="browser" x={80} y={1680} height={1200}>
+      <Screen surface="browser" html={"<div style='display:flex;flex-direction:column;gap:12px;padding:16px'><h2>Backup Server</h2><label>Name<input value='Backup Server' /></label><label>Description<input value='Backup server for the interwebs' /></label><label>Default priority<input value='0' /></label><label style='display:flex;align-items:center;gap:8px'><input type='checkbox' checked /> Alarm</label><label>Priority threshold<input value='8' /></label><label>Repeat<input value='30 seconds' /></label><label>Max ring<input value='30 minutes' /></label><div class='wf-card'><p>I'm up</p><small>10 minutes até o próximo estágio</small></div><div class='wf-card'><p>I'm at my computer</p><small>Último estágio. Este toque encerra.</small></div><button class='primary'>Save</button></div>"} />
+    </Artboard>
+  </Section>
+
+  <Annotation id="note-ringing" targetId="ringing" placement="bottom" text="Só o primeiro estágio aparece. Prioridade menor que 8, ou alarme desligado, continua na notificação normal do Gotify." />
+  <Annotation id="note-waiting" targetId="waiting" placement="bottom" text="O prazo é do estágio que acabou de ser confirmado. Estourar zera o progresso e a tela de toque volta." />
+  <Annotation id="note-settings" targetId="app-settings" placement="right" text="A lista é livre. O padrão são estes dois rótulos. O telefone só mostra o próximo botão e envia o índice." />
+
+  <Connector from="ringing" to="waiting" />
+  <Connector from="waiting" to="closed" />
+</DesignBoard>

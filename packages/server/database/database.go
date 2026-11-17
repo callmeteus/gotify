@@ -87,7 +87,7 @@ func New(dialect, connection, defaultUser, defaultPass string, strength int, cre
 		sqldb.SetConnMaxLifetime(9 * time.Minute)
 	}
 
-	if err := db.AutoMigrate(new(model.User), new(model.Application), new(model.Message), new(model.Client), new(model.PluginConf), new(model.ApplicationAlarm), new(model.Incident)); err != nil {
+	if err := db.AutoMigrate(new(model.User), new(model.Application), new(model.Message), new(model.Client), new(model.PluginConf), new(model.ApplicationAlarm), new(model.Incident), new(model.Presence)); err != nil {
 		return nil, err
 	}
 
