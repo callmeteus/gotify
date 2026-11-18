@@ -45,6 +45,7 @@ const Presence = () => {
     return (
         <DefaultPage
             title="Presence"
+            maxWidth={1000}
             rightControl={
                 <div>
                     <Button onClick={() => override('at_desk')}>I'm at the PC</Button>

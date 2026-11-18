@@ -52,6 +52,7 @@ const Users = observer(() => {
     return (
         <DefaultPage
             title="Users"
+            maxWidth={1000}
             rightControl={
                 <Button
                     id="create-user"
