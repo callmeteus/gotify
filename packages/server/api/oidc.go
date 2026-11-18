@@ -66,6 +66,7 @@ func NewOIDC(conf *config.Configuration, db *database.GormDatabase, userChangeNo
 		GroupsClaim:        conf.OIDC.GroupsClaim,
 		GroupsUser:         conf.OIDC.GroupsUser,
 		GroupsAdmin:        conf.OIDC.GroupsAdmin,
+		Scopes:             conf.OIDC.Scopes,
 		PasswordStrength:   conf.PassStrength,
 		SecureCookie:       conf.Server.SecureCookie,
 		AutoRegister:       conf.OIDC.AutoRegister,
@@ -98,6 +99,7 @@ type OIDCAPI struct {
 	GroupsClaim        string
 	GroupsUser         []string
 	GroupsAdmin        []string
+	Scopes             []string
 	PasswordStrength   int
 	SecureCookie       bool
 	AutoRegister       bool
@@ -251,7 +253,14 @@ func (a *OIDCAPI) CallbackHandler() gin.HandlerFunc {
 		w.Header().Set("Location", "../../")
 		w.WriteHeader(http.StatusTemporaryRedirect)
 	}
-	return gin.WrapF(rp.CodeExchangeHandler(rp.UserinfoCallback(callback), a.Provider))
+	// Send the scopes again on the token exchange. Some providers (Authentik)
+	// otherwise issue an access token with no scope, and their userinfo endpoint
+	// rejects it because the openid scope is missing.
+	return gin.WrapF(rp.CodeExchangeHandler(
+		rp.UserinfoCallback(callback),
+		a.Provider,
+		rp.WithURLParam("scope", strings.Join(a.Scopes, " ")),
+	))
 }
 
 func (a *OIDCAPI) handleElevationCallback(w http.ResponseWriter, elevate *pendingElevation, user *model.User) {
@@ -380,6 +389,7 @@ func (a *OIDCAPI) ExternalTokenHandler(ctx *gin.Context) {
 	}
 	exchangeOpts := []rp.CodeExchangeOpt{
 		rp.CodeExchangeOpt(rp.WithURLParam("redirect_uri", session.RedirectURI)),
+		rp.CodeExchangeOpt(rp.WithURLParam("scope", strings.Join(a.Scopes, " "))),
 		rp.WithCodeVerifier(req.CodeVerifier),
 	}
 	tokens, err := rp.CodeExchange[*oidc.IDTokenClaims](ctx.Request.Context(), req.Code, a.Provider, exchangeOpts...)
