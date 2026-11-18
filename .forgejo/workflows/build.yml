@@ -74,7 +74,7 @@ jobs:
               "import json,sys; print(next((a['id'] for a in json.load(sys.stdin) if a['name']=='$name'), ''))")
             if [ -n "$old" ]; then
               curl -fsS -X DELETE -H "Authorization: token $TOKEN" \
-                "$RELEASE_API/releases/assets/$old"
+                "$RELEASE_API/releases/$RELEASE_ID/assets/$old"
             fi
             echo "uploading $name"
             curl -fsS -X POST \
