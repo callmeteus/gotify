@@ -2,6 +2,7 @@ import {IVersion} from './types';
 
 export interface IConfig {
     url: string;
+    downloadBaseUrl: string;
     register: boolean;
     version: IVersion;
     oidc: boolean;
@@ -18,6 +19,7 @@ declare global {
 
 const config: IConfig = {
     url: 'unset',
+    downloadBaseUrl: 'https://forgejo.svs.e7.dev/forgejo/gotfy/releases/download/latest/',
     register: false,
     version: {commit: 'unknown', buildDate: 'unknown', version: 'unknown'},
     oidc: false,

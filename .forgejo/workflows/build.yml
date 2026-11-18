@@ -1,0 +1,94 @@
+name: build and release
+
+# Runs on every push to master (and on tags). Each job uploads its artifacts
+# straight to the "latest" release on this Forgejo instance, so the Clients tab
+# of the Gotify web UI always points at freshly built downloads.
+
+on:
+  push:
+    branches: [master]
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+env:
+  RELEASE_API: https://forgejo.svs.e7.dev/api/v1/repos/forgejo/gotfy
+
+jobs:
+  linux:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.27.2'
+
+      - name: Build CLI and server binaries
+        run: |
+          mkdir -p dist
+          (cd packages/cli && GOOS=linux GOARCH=amd64 go build -o ../../dist/gotify-cli-linux-amd64 .)
+          (cd packages/cli && GOOS=linux GOARCH=arm64 go build -o ../../dist/gotify-cli-linux-arm64 .)
+          (cd packages/cli && GOOS=windows GOARCH=amd64 go build -o ../../dist/gotify-cli-windows-amd64.exe .)
+          (cd packages/server && GOOS=linux GOARCH=amd64 go build -o ../../dist/gotify-server-linux-amd64 .)
+          (cd packages/server && GOOS=linux GOARCH=arm64 go build -o ../../dist/gotify-server-linux-arm64 .)
+
+      - name: Build Android APK
+        run: |
+          docker run --rm -v "$PWD:/workspace" -w /workspace/packages/android \
+            mingc/android-build-box:latest bash -lc "./gradlew --no-daemon assembleDebug"
+          cp packages/android/app/build/outputs/apk/debug/app-debug.apk dist/gotify-android.apk
+
+      - name: Ensure latest release exists
+        env:
+          TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          curl -fsS -H "Authorization: token $TOKEN" -H "Content-Type: application/json" \
+            -d '{"tag_name":"latest","name":"latest","target_commitish":"master"}' \
+            "$RELEASE_API/releases" || true
+
+      - name: Upload Linux and Android assets
+        env:
+          TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          for file in dist/*; do
+            name=$(basename "$file")
+            echo "uploading $name"
+            curl -fsS -X POST \
+              -H "Authorization: token $TOKEN" \
+              -H "Content-Type: application/octet-stream" \
+              --data-binary "@$file" \
+              "$RELEASE_API/releases/tags/latest/assets?name=$name"
+          done
+
+  ios:
+    # Needs a Forgejo runner on even7-mac-server with the label "macos".
+    runs-on: macos
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build iOS artifact
+        run: |
+          mkdir -p dist
+          cd packages/ios
+          swift build -c release
+          ditto -c -k --sequesterRsrc --keepParent .build/release dist/gotify-ios.zip
+
+      - name: Ensure latest release exists
+        env:
+          TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          curl -fsS -H "Authorization: token $TOKEN" -H "Content-Type: application/json" \
+            -d '{"tag_name":"latest","name":"latest","target_commitish":"master"}' \
+            "$RELEASE_API/releases" || true
+
+      - name: Upload iOS asset
+        env:
+          TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          curl -fsS -X POST \
+            -H "Authorization: token $TOKEN" \
+            -H "Content-Type: application/octet-stream" \
+            --data-binary "@dist/gotify-ios.zip" \
+            "$RELEASE_API/releases/tags/latest/assets?name=gotify-ios.zip"

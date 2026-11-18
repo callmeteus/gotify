@@ -77,6 +77,22 @@ describe('Client', () => {
     it('has changed url', async () => {
         expect(page.url()).toContain('/clients');
     });
+    it('offers client downloads', async () => {
+        const links = await page.$$eval('#client-downloads a', (elements) =>
+            elements.map((element) => ({
+                text: element.textContent?.trim(),
+                href: element.getAttribute('href'),
+            }))
+        );
+        expect(links).toContainEqual({
+            text: 'Android app',
+            href: expect.stringContaining('gotify-android.apk'),
+        });
+        expect(links).toContainEqual({
+            text: 'iOS build',
+            href: expect.stringContaining('gotify-ios.zip'),
+        });
+    });
     it('has one client (the current session)', async () => {
         await page.waitForSelector($table.row(1));
         expect(await count(page, $table.rows())).toBe(1);

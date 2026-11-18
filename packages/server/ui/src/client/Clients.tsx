@@ -24,6 +24,7 @@ import {RemainingTime} from '../common/RemainingTime';
 import {observer} from 'mobx-react-lite';
 import {useStores} from '../stores';
 import {TokenConfirmDialog} from '../common/TokenConfirmDialog';
+import * as config from '../config';
 
 const Clients = observer(() => {
     const {clientStore, currentUser} = useStores();
@@ -49,6 +50,30 @@ const Clients = observer(() => {
                     Create Client
                 </Button>
             }>
+            <Grid size={12}>
+                <Paper elevation={6} style={{padding: 16}}>
+                    <div style={{fontWeight: 500, marginBottom: 8}}>Download clients</div>
+                    <div id="client-downloads" style={{display: 'flex', flexWrap: 'wrap', gap: 8}}>
+                        {[
+                            {name: 'Android app', file: 'gotify-android.apk'},
+                            {name: 'CLI (Linux amd64)', file: 'gotify-cli-linux-amd64'},
+                            {name: 'CLI (Linux arm64)', file: 'gotify-cli-linux-arm64'},
+                            {name: 'CLI (Windows)', file: 'gotify-cli-windows-amd64.exe'},
+                            {name: 'Server (Linux amd64)', file: 'gotify-server-linux-amd64'},
+                            {name: 'Server (Linux arm64)', file: 'gotify-server-linux-arm64'},
+                            {name: 'iOS build', file: 'gotify-ios.zip'},
+                        ].map((item) => (
+                            <Button
+                                key={item.file}
+                                href={config.get('downloadBaseUrl') + item.file}
+                                target="_blank"
+                                rel="noopener noreferrer">
+                                {item.name}
+                            </Button>
+                        ))}
+                    </div>
+                </Paper>
+            </Grid>
             <Grid size={12}>
                 <Paper elevation={6} style={{overflowX: 'auto'}}>
                     <Table id="client-table">
