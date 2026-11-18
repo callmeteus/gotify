@@ -59,8 +59,6 @@ const Clients = observer(() => {
                             {name: 'CLI (Linux amd64)', file: 'gotify-cli-linux-amd64'},
                             {name: 'CLI (Linux arm64)', file: 'gotify-cli-linux-arm64'},
                             {name: 'CLI (Windows)', file: 'gotify-cli-windows-amd64.exe'},
-                            {name: 'Server (Linux amd64)', file: 'gotify-server-linux-amd64'},
-                            {name: 'Server (Linux arm64)', file: 'gotify-server-linux-arm64'},
                             {name: 'Swift build (macOS)', file: 'gotify-swift.zip'},
                         ].map((item) => (
                             <Button

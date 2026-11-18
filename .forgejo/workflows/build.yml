@@ -26,26 +26,12 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version: '1.27.2'
-      - uses: actions/setup-node@v4
-        with:
-          node-version: '24'
-
-      - name: Build web UI (embedded by the server)
-        env:
-          PUPPETEER_SKIP_DOWNLOAD: 'true'
-        run: |
-          cd packages/server/ui
-          npm install --no-audit --no-fund
-          npm run build
-
-      - name: Build CLI and server binaries
+      - name: Build CLI binaries
         run: |
           mkdir -p dist
           (cd packages/cli && GOOS=linux GOARCH=amd64 go build -o ../../dist/gotify-cli-linux-amd64 .)
           (cd packages/cli && GOOS=linux GOARCH=arm64 go build -o ../../dist/gotify-cli-linux-arm64 .)
           (cd packages/cli && GOOS=windows GOARCH=amd64 go build -o ../../dist/gotify-cli-windows-amd64.exe .)
-          (cd packages/server && GOOS=linux GOARCH=amd64 go build -o ../../dist/gotify-server-linux-amd64 .)
-          (cd packages/server && GOOS=linux GOARCH=arm64 go build -o ../../dist/gotify-server-linux-arm64 .)
 
       - name: Publish Android APK
         # The APK is versioned in packages/android/app (built locally with the
