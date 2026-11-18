@@ -14,7 +14,9 @@ permissions:
   contents: write
 
 env:
-  RELEASE_API: https://forgejo.svs.e7.dev/api/v1/repos/forgejo/gotfy
+  # The runner lives on the Forgejo VM, so publish through its local API.
+  # Browser download links in the UI still use the NetBird proxy domain.
+  RELEASE_API: http://127.0.0.1:3000/api/v1/repos/forgejo/gotfy
 
 jobs:
   linux:
