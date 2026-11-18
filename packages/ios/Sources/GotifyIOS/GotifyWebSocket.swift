@@ -2,11 +2,11 @@ import Foundation
 
 /// Connects to `/stream?presence=1`. Message frames are forwarded as raw JSON;
 /// presence frames are decoded into `Presence`.
-public final class GotifyWebSocket: NSObject, URLSessionWebSocketDelegate {
-    public var onMessage: ((String) -> Void)?
-    public var onPresence: ((Presence) -> Void)?
-    public var onOpen: (() -> Void)?
-    public var onClose: (() -> Void)?
+final class GotifyWebSocket: NSObject, URLSessionWebSocketDelegate {
+    var onMessage: ((String) -> Void)?
+    var onPresence: ((Presence) -> Void)?
+    var onOpen: (() -> Void)?
+    var onClose: (() -> Void)?
 
     private let url: URL
     private var task: URLSessionWebSocketTask?
@@ -16,7 +16,7 @@ public final class GotifyWebSocket: NSObject, URLSessionWebSocketDelegate {
         return decoder
     }()
 
-    public init(baseURL: String, token: String) {
+    init(baseURL: String, token: String) {
         var components = URLComponents(string: baseURL)!
         components.path += "/stream"
         components.queryItems = [
@@ -27,7 +27,7 @@ public final class GotifyWebSocket: NSObject, URLSessionWebSocketDelegate {
         super.init()
     }
 
-    public func connect() {
+    func connect() {
         task = URLSession.shared.webSocketTask(with: url)
         task?.delegate = self
         task?.resume()
@@ -35,12 +35,12 @@ public final class GotifyWebSocket: NSObject, URLSessionWebSocketDelegate {
         receive()
     }
 
-    public func close() {
+    func close() {
         task?.cancel(with: .goingAway, reason: nil)
         task = nil
     }
 
-    public func urlSession(_ session: URLSession, webSocketTask: URLSessionWebSocketTask,
+    func urlSession(_ session: URLSession, webSocketTask: URLSessionWebSocketTask,
                            didCloseWith closeCode: URLSessionWebSocketTask.CloseCode, reason: Data?) {
         onClose?()
     }

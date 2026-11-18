@@ -1,8 +1,8 @@
 import Foundation
 
 /// Port of the Android evaluator. Keep the same vectors in both test suites.
-public enum PresenceEvaluator {
-    public static func evaluate(
+enum PresenceEvaluator {
+    static func evaluate(
         _ snapshot: PresenceSnapshot,
         awayDebounceSeconds: Int,
         now: Date,
@@ -30,7 +30,7 @@ public enum PresenceEvaluator {
         }
 
         let configured = signals.filter { $0.1.configured }
-        let allAway = !configured.isEmpty && configured.all { $0.1.available && !$0.1.atDesk }
+        let allAway = !configured.isEmpty && configured.allSatisfy { $0.1.available && !$0.1.atDesk }
         guard allAway else {
             return Evaluation(
                 decision: Decision(state: .unknown, source: .mixed, detail: nil),

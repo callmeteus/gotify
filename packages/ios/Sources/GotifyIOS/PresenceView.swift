@@ -1,18 +1,18 @@
 import SwiftUI
 
-public struct PresenceView: View {
+struct PresenceView: View {
     @State private var items: [Presence] = []
     @State private var message: String?
 
     private let baseURL: String
     private let token: String
 
-    public init(baseURL: String, token: String) {
+    init(baseURL: String, token: String) {
         self.baseURL = baseURL
         self.token = token
     }
 
-    public var body: some View {
+    var body: some View {
         List {
             if let message { Section { Text(message).foregroundStyle(.red) } }
             Section {

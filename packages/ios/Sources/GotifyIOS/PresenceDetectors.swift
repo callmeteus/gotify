@@ -5,25 +5,25 @@ import Network
 
 /// Reads the configured signals. Wi-Fi SSID is not available on iOS without a private
 /// entitlement, so the iOS port uses geofences, Bluetooth and the manual override.
-public final class PresenceDetectors: NSObject, CLLocationManagerDelegate {
+final class PresenceDetectors: NSObject, CLLocationManagerDelegate {
     private let locationManager = CLLocationManager()
     private var lastLocation: CLLocation?
     private var connectedDeviceName: String?
 
-    public var geofences: [(latitude: Double, longitude: Double, radius: CLLocationDistance)] = []
-    public var bluetoothDeviceNames: Set<String> = []
+    var geofences: [(latitude: Double, longitude: Double, radius: CLLocationDistance)] = []
+    var bluetoothDeviceNames: Set<String> = []
 
-    public override init() {
+    override init() {
         super.init()
         locationManager.delegate = self
         locationManager.desiredAccuracy = kCLLocationAccuracyHundredMeters
     }
 
-    public func requestPermissions() {
+    func requestPermissions() {
         locationManager.requestWhenInUseAuthorization()
     }
 
-    public func startMonitoring() {
+    func startMonitoring() {
         for (index, fence) in geofences.enumerated() {
             let region = CLCircularRegion(
                 center: CLLocationCoordinate2D(latitude: fence.latitude, longitude: fence.longitude),
@@ -39,19 +39,19 @@ public final class PresenceDetectors: NSObject, CLLocationManagerDelegate {
         locationManager.startUpdatingLocation()
     }
 
-    public func locationManager(_ manager: CLLocationManager, didUpdateLocations locations: [CLLocation]) {
+    func locationManager(_ manager: CLLocationManager, didUpdateLocations locations: [CLLocation]) {
         lastLocation = locations.last
     }
 
-    public func locationManager(_ manager: CLLocationManager, didEnterRegion region: CLRegion) {
+    func locationManager(_ manager: CLLocationManager, didEnterRegion region: CLRegion) {
         lastLocation = manager.location
     }
 
-    public func locationManager(_ manager: CLLocationManager, didExitRegion region: CLRegion) {
+    func locationManager(_ manager: CLLocationManager, didExitRegion region: CLRegion) {
         lastLocation = manager.location
     }
 
-    public func snapshot(manual: Signal) -> PresenceSnapshot {
+    func snapshot(manual: Signal) -> PresenceSnapshot {
         PresenceSnapshot(
             manual: manual,
             location: locationSignal(),
