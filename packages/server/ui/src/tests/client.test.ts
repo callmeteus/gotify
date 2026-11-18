@@ -89,8 +89,8 @@ describe('Client', () => {
             href: expect.stringContaining('gotify-android.apk'),
         });
         expect(links).toContainEqual({
-            text: 'iOS build',
-            href: expect.stringContaining('gotify-ios.zip'),
+            text: 'Swift build (macOS)',
+            href: expect.stringContaining('gotify-swift.zip'),
         });
     });
     it('has one client (the current session)', async () => {

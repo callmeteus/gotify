@@ -95,7 +95,7 @@ jobs:
           mkdir -p dist
           cd packages/ios
           swift build -c release
-          ditto -c -k --sequesterRsrc --keepParent .build/release dist/gotify-ios.zip
+          ditto -c -k --sequesterRsrc --keepParent .build/release dist/gotify-swift.zip
 
       - name: Ensure latest release exists
         env:
@@ -113,7 +113,7 @@ jobs:
             "$RELEASE_API/releases/tags/latest" | python3 -c 'import json,sys; print(json.load(sys.stdin)["id"])')
           old=$(curl -fsS -H "Authorization: token $TOKEN" \
             "$RELEASE_API/releases/$RELEASE_ID/assets" | python3 -c \
-            "import json,sys; print(next((a['id'] for a in json.load(sys.stdin) if a['name']=='gotify-ios.zip'), ''))")
+            "import json,sys; print(next((a['id'] for a in json.load(sys.stdin) if a['name']=='gotify-swift.zip'), ''))")
           if [ -n "$old" ]; then
             curl -fsS -X DELETE -H "Authorization: token $TOKEN" \
               "$RELEASE_API/releases/assets/$old"
@@ -121,5 +121,5 @@ jobs:
           curl -fsS -X POST \
             -H "Authorization: token $TOKEN" \
             -H "Content-Type: application/octet-stream" \
-            --data-binary "@dist/gotify-ios.zip" \
-            "$RELEASE_API/releases/$RELEASE_ID/assets?name=gotify-ios.zip"
+            --data-binary "@dist/gotify-swift.zip" \
+            "$RELEASE_API/releases/$RELEASE_ID/assets?name=gotify-swift.zip"
