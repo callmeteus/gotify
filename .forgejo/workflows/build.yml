@@ -93,9 +93,8 @@ jobs:
       - name: Build iOS artifact
         run: |
           mkdir -p dist
-          cd packages/ios
-          swift build -c release
-          ditto -c -k --sequesterRsrc --keepParent .build/release dist/gotify-swift.zip
+          swift build --package-path packages/ios -c release
+          ditto -c -k --sequesterRsrc --keepParent packages/ios/.build/release dist/gotify-swift.zip
 
       - name: Ensure latest release exists
         env:
