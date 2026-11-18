@@ -45,11 +45,11 @@ jobs:
           (cd packages/server && GOOS=linux GOARCH=amd64 go build -o ../../dist/gotify-server-linux-amd64 .)
           (cd packages/server && GOOS=linux GOARCH=arm64 go build -o ../../dist/gotify-server-linux-arm64 .)
 
-      - name: Build Android APK
-        run: |
-          docker run --rm -v "$PWD:/workspace" -w /workspace/packages/android \
-            mingc/android-build-box:latest bash -lc "./gradlew --no-daemon assembleDebug"
-          cp packages/android/app/build/outputs/apk/debug/app-debug.apk dist/gotify-android.apk
+      - name: Publish Android APK
+        # The APK is versioned in packages/android/app (built locally with the
+        # Android SDK). The Forgejo runner is arm64 and cannot run the amd64
+        # Android build image, so it publishes the committed artifact.
+        run: cp packages/android/app/gotify-android.apk dist/gotify-android.apk
 
       - name: Ensure latest release exists
         env:
