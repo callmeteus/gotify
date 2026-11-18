@@ -136,20 +136,35 @@ const Buttons = ({
             />
             {admin && (
                 <Link className={classes.link} to="/users" id="navigate-users">
-                    <ResponsiveButton icon={<SupervisorAccount />} label="users" color="inherit" />
+                    <ResponsiveButton
+                        icon={<SupervisorAccount />}
+                        label="users"
+                        color="inherit"
+                        fixedWidth
+                    />
                 </Link>
             )}
             <Link className={classes.link} to="/applications" id="navigate-apps">
-                <ResponsiveButton icon={<Chat />} label="apps" color="inherit" />
+                <ResponsiveButton icon={<Chat />} label="apps" color="inherit" fixedWidth />
             </Link>
             <Link className={classes.link} to="/clients" id="navigate-clients">
-                <ResponsiveButton icon={<DevicesOther />} label="clients" color="inherit" />
+                <ResponsiveButton
+                    icon={<DevicesOther />}
+                    label="clients"
+                    color="inherit"
+                    fixedWidth
+                />
             </Link>
             <Link className={classes.link} to="/plugins" id="navigate-plugins">
-                <ResponsiveButton icon={<Apps />} label="plugins" color="inherit" />
+                <ResponsiveButton icon={<Apps />} label="plugins" color="inherit" fixedWidth />
             </Link>
             <Link className={classes.link} to="/presence" id="navigate-presence">
-                <ResponsiveButton icon={<MyLocation />} label="presence" color="inherit" />
+                <ResponsiveButton
+                    icon={<MyLocation />}
+                    label="presence"
+                    color="inherit"
+                    fixedWidth
+                />
             </Link>
             <ResponsiveButton
                 icon={<AccountCircle />}
@@ -197,17 +212,21 @@ const ResponsiveButton: React.FC<{
     id?: string;
     onClick?: (event: React.MouseEvent<HTMLElement>) => void;
     icon: React.ReactNode;
-}> = ({icon, label, ...rest}) => {
+    fixedWidth?: boolean;
+}> = ({icon, label, fixedWidth, sx, ...rest}) => {
     const matches = useMediaQuery('(max-width:1000px)');
     if (matches) {
         return (
-            <IconButton {...rest} size="large">
+            <IconButton {...rest} sx={sx} size="large">
                 {icon}
             </IconButton>
         );
     }
     return (
-        <Button startIcon={icon} {...rest}>
+        <Button
+            startIcon={icon}
+            {...rest}
+            sx={fixedWidth ? {width: 120, minWidth: 120, ...sx} : sx}>
             {label}
         </Button>
     );
