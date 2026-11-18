@@ -29,6 +29,8 @@ jobs:
           node-version: '24'
 
       - name: Build web UI (embedded by the server)
+        env:
+          PUPPETEER_SKIP_DOWNLOAD: 'true'
         run: |
           cd packages/server/ui
           npm install --no-audit --no-fund
