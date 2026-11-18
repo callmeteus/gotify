@@ -65,14 +65,23 @@ jobs:
         env:
           TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
+          RELEASE_ID=$(curl -fsS -H "Authorization: token $TOKEN" \
+            "$RELEASE_API/releases/tags/latest" | python3 -c 'import json,sys; print(json.load(sys.stdin)["id"])')
           for file in dist/*; do
             name=$(basename "$file")
+            old=$(curl -fsS -H "Authorization: token $TOKEN" \
+              "$RELEASE_API/releases/$RELEASE_ID/assets" | python3 -c \
+              "import json,sys; print(next((a['id'] for a in json.load(sys.stdin) if a['name']=='$name'), ''))")
+            if [ -n "$old" ]; then
+              curl -fsS -X DELETE -H "Authorization: token $TOKEN" \
+                "$RELEASE_API/releases/assets/$old"
+            fi
             echo "uploading $name"
             curl -fsS -X POST \
               -H "Authorization: token $TOKEN" \
               -H "Content-Type: application/octet-stream" \
               --data-binary "@$file" \
-              "$RELEASE_API/releases/tags/latest/assets?name=$name"
+              "$RELEASE_API/releases/$RELEASE_ID/assets?name=$name"
           done
 
   ios:
@@ -100,8 +109,17 @@ jobs:
         env:
           TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
+          RELEASE_ID=$(curl -fsS -H "Authorization: token $TOKEN" \
+            "$RELEASE_API/releases/tags/latest" | python3 -c 'import json,sys; print(json.load(sys.stdin)["id"])')
+          old=$(curl -fsS -H "Authorization: token $TOKEN" \
+            "$RELEASE_API/releases/$RELEASE_ID/assets" | python3 -c \
+            "import json,sys; print(next((a['id'] for a in json.load(sys.stdin) if a['name']=='gotify-ios.zip'), ''))")
+          if [ -n "$old" ]; then
+            curl -fsS -X DELETE -H "Authorization: token $TOKEN" \
+              "$RELEASE_API/releases/assets/$old"
+          fi
           curl -fsS -X POST \
             -H "Authorization: token $TOKEN" \
             -H "Content-Type: application/octet-stream" \
             --data-binary "@dist/gotify-ios.zip" \
-            "$RELEASE_API/releases/tags/latest/assets?name=gotify-ios.zip"
+            "$RELEASE_API/releases/$RELEASE_ID/assets?name=gotify-ios.zip"
