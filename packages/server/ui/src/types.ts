@@ -66,6 +66,7 @@ export interface IAlarmStage {
 export interface IIncident {
     id: number;
     appid: number;
+    messageId?: number;
     state: string;
     kind: string;
     currentStage: number;

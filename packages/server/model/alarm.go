@@ -71,6 +71,7 @@ type Incident struct {
 type IncidentExternal struct {
 	ID                    uint         `json:"id"`
 	ApplicationID         uint         `json:"appid"`
+	MessageID             uint         `json:"messageId,omitempty"`
 	State                 string       `json:"state"`
 	Kind                  string       `json:"kind"`
 	CurrentStage          int          `json:"currentStage"`

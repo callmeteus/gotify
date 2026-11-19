@@ -55,7 +55,8 @@ const Messages = observer(() => {
         if (!messagesStore.loaded(appId)) {
             messagesStore.loadMore(appId);
         }
-    }, [appId]);
+        void messagesStore.fetchIncidents();
+    }, [appId, messagesStore]);
 
     const renderMessage = (_index: number, message: IMessage) => (
         <Message

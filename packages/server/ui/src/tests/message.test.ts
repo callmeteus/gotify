@@ -102,22 +102,21 @@ describe('Messages', () => {
         expect(await count(page, '#push-message')).toBe(0);
     });
     it('renders message content as markdown by default', async () => {
-        await navigate('Windows');
-        await page.waitForSelector('#push-message');
-        await page.click('#push-message');
-        await page.waitForSelector('#push-message-dialog');
-        await page.type('#push-message-dialog .title input', 'Markdown');
-        await page.type(
-            '#push-message-dialog .message textarea',
-            '[Ver no Grafana](https://grafana.svs.e7.dev/)'
+        await createMessage(
+            {
+                title: 'Markdown',
+                message: 'Linha 1\nLinha 2\n[Ver no Grafana](https://grafana.svs.e7.dev/)',
+                priority: 2,
+            },
+            windowsServerToken
         );
-        await page.click('#push-message-dialog .send');
-        await waitToDisappear(page, '#push-message-dialog');
+        await navigate('Windows');
         await waitForCount(page, '#messages .message', 1);
         const href = await page.$eval('#messages .message .content a', (a) =>
             a.getAttribute('href')
         );
         expect(href).toBe('https://grafana.svs.e7.dev/');
+        expect(await count(page, '#messages .message .content br')).toBeGreaterThanOrEqual(2);
         await page.click('#messages .message .delete');
         await waitForCount(page, '#messages .message', 0);
         await navigate('All Messages');

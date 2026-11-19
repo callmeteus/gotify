@@ -2,6 +2,7 @@ import React from 'react';
 import ReactMarkdown, {defaultUrlTransform} from 'react-markdown';
 import type {UrlTransform} from 'react-markdown';
 import gfm from 'remark-gfm';
+import breaks from 'remark-breaks';
 
 // Copy from mlflow/server/js/src/shared/web-shared/genai-markdown-renderer/GenAIMarkdownRenderer.tsx
 // Related PR: https://github.com/mlflow/mlflow/pull/16761
@@ -25,7 +26,7 @@ export const Markdown = ({
 }) => (
     <ReactMarkdown
         components={{img: ({...props}) => <img onLoad={onImageLoaded} {...props} />}}
-        remarkPlugins={[gfm]}
+        remarkPlugins={[gfm, breaks]}
         urlTransform={urlTransform}>
         {children}
     </ReactMarkdown>

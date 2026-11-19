@@ -13,6 +13,9 @@ public class Incident {
     @SerializedName("appid")
     private Long appid;
 
+    @SerializedName("messageId")
+    private Long messageId;
+
     @SerializedName("state")
     private String state;
 
@@ -46,6 +49,10 @@ public class Incident {
 
     public Long getAppid() {
         return appid;
+    }
+
+    public Long getMessageId() {
+        return messageId;
     }
 
     public String getState() {
@@ -95,6 +102,7 @@ public class Incident {
         Incident incident = (Incident) other;
         return Objects.equals(id, incident.id)
                 && Objects.equals(appid, incident.appid)
+                && Objects.equals(messageId, incident.messageId)
                 && Objects.equals(state, incident.state)
                 && Objects.equals(kind, incident.kind)
                 && Objects.equals(currentStage, incident.currentStage)
@@ -111,6 +119,7 @@ public class Incident {
         return Objects.hash(
                 id,
                 appid,
+                messageId,
                 state,
                 kind,
                 currentStage,

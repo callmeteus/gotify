@@ -390,6 +390,7 @@ func toIncidentExternal(incident *model.Incident, config *model.AlarmConfig, kin
 	return &model.IncidentExternal{
 		ID:                    incident.ID,
 		ApplicationID:         incident.ApplicationID,
+		MessageID:             incident.MessageID,
 		State:                 incident.State,
 		Kind:                  kind,
 		CurrentStage:          incident.CurrentStage,

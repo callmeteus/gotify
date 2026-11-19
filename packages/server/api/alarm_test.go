@@ -91,6 +91,7 @@ func (s *AlarmSuite) Test_open_and_secondMessageJoins() {
 	assert.Equal(s.T(), model.IncidentStateRinging, first.State)
 	assert.Equal(s.T(), -1, first.CurrentStage)
 	assert.Equal(s.T(), "backup", first.Title)
+	assert.NotZero(s.T(), first.MessageID)
 
 	s.post(app, `{"title":"backup","message":"second","priority":9}`)
 	second := s.notified[1].Incident

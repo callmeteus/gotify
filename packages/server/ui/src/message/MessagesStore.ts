@@ -4,7 +4,7 @@ import axios, {AxiosResponse} from 'axios';
 import * as config from '../config';
 import {createTransformer} from 'mobx-utils';
 import {SnackReporter} from '../snack/SnackManager';
-import {IApplication, IMessage, IPagedMessages} from '../types';
+import {IApplication, IIncident, IMessage, IPagedMessages} from '../types';
 import {closeSnackbar, SnackbarKey} from 'notistack';
 
 const AllMessages = -1;
@@ -24,6 +24,7 @@ interface PendingDelete {
 export class MessagesStore {
     @observable private accessor state: Record<string, MessagesState> = {};
     @observable private accessor pendingDeletes: Map<number, PendingDelete> = observable.map();
+    @observable private accessor incidents: Map<number, IIncident> = observable.map();
 
     private loading = false;
 
@@ -59,6 +60,7 @@ export class MessagesStore {
             );
             runInAction(() => {
                 state.messages.replace([...state.messages, ...pagedResult.messages]);
+                this.applyIncidents(state.messages);
                 state.nextSince = pagedResult.paging.since ?? 0;
                 state.hasMore = 'next' in pagedResult.paging;
                 state.loaded = true;
@@ -78,6 +80,36 @@ export class MessagesStore {
         if (this.exists(message.appid)) {
             this.upsert(this.stateOf(message.appid).messages, message);
         }
+    };
+
+    @action
+    public setIncident = (incident: IIncident) => {
+        if (!incident.messageId) {
+            return;
+        }
+        this.incidents.set(incident.messageId, incident);
+        Object.values(this.state).forEach((state) => {
+            this.applyIncidents(state.messages);
+        });
+    };
+
+    @action
+    public fetchIncidents = async () => {
+        try {
+            const response = await axios.get<IIncident[]>(config.get('url') + 'incident');
+            response.data.forEach(this.setIncident);
+        } catch {
+            // The server may be older than the fork; messages still render without stages.
+        }
+    };
+
+    private applyIncidents = (messages: IObservableArray<IMessage>) => {
+        messages.forEach((message, index) => {
+            const incident = this.incidents.get(message.id);
+            if (incident && message.incident !== incident) {
+                messages[index] = {...message, incident};
+            }
+        });
     };
 
     // Incident updates reuse the message id. Replace in place so the stage
