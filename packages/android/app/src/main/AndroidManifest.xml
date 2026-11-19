@@ -112,6 +112,13 @@
         <receiver
             android:name=".alarm.AlarmRepeatReceiver"
             android:exported="false" />
+        <receiver
+            android:name=".alarm.IncidentActionReceiver"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="com.github.gotify.alarm.INCIDENT_ADVANCE" />
+            </intent-filter>
+        </receiver>
     </application>
 
 </manifest>

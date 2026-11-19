@@ -8,7 +8,8 @@ export enum RenderMode {
 export const contentType = (extras?: IMessageExtras): RenderMode => {
     const type = extract(extras, 'client::display', 'contentType');
     const valid = Object.values(RenderMode).includes(type);
-    return valid ? type : RenderMode.Plain;
+    // Messages are Markdown by default; an explicit text/plain extra opts out.
+    return valid ? type : RenderMode.Markdown;
 };
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any

@@ -28,7 +28,9 @@ import com.github.gotify.Settings
 import com.github.gotify.Utils
 import com.github.gotify.alarm.AlarmActivity
 import com.github.gotify.alarm.AlarmController
+import com.github.gotify.alarm.IncidentActionReceiver
 import com.github.gotify.alarm.IncidentApi
+import com.github.gotify.alarm.IncidentStages
 import com.github.gotify.api.Callback
 import com.github.gotify.api.ClientFactory
 import com.github.gotify.client.api.ApplicationApi
@@ -466,6 +468,7 @@ internal class WebSocketService : Service() {
             .setPriority(NotificationCompat.PRIORITY_MAX)
             .setColor(ContextCompat.getColor(applicationContext, R.color.colorPrimary))
             .setContentIntent(contentIntent)
+        addIncidentActions(builder, message)
         if (fullScreen) {
             builder.setFullScreenIntent(contentIntent, true)
             builder.setSound(null)
@@ -488,6 +491,24 @@ internal class WebSocketService : Service() {
             message.id
         }
         notificationManager.notify(Utils.longToInt(id), builder.build())
+    }
+
+    private fun addIncidentActions(builder: NotificationCompat.Builder, message: Message) {
+        val incident = message.incident ?: return
+        val stage = IncidentStages.next(incident) ?: return
+        val label = incident.stages?.getOrNull(stage)?.label ?: return
+        val intent = Intent(this, IncidentActionReceiver::class.java).apply {
+            action = IncidentActionReceiver.ACTION
+            putExtra(IncidentActionReceiver.EXTRA_ID, incident.id)
+            putExtra(IncidentActionReceiver.EXTRA_STAGE, stage)
+        }
+        val pending = PendingIntent.getBroadcast(
+            this,
+            Utils.longToInt(incident.id ?: 0L) + stage,
+            intent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+        builder.addAction(0, label, pending)
     }
 
     private fun alarmChannel(priority: Long, appId: Long): String {

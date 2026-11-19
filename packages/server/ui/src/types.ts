@@ -58,6 +58,25 @@ export interface IPlugin {
     createdAt: string;
 }
 
+export interface IAlarmStage {
+    label: string;
+    advanceWithinSeconds: number;
+}
+
+export interface IIncident {
+    id: number;
+    appid: number;
+    state: string;
+    kind: string;
+    currentStage: number;
+    stages: IAlarmStage[];
+    stageDeadlineAt?: string;
+    ringUntil?: string;
+    repeatIntervalSeconds: number;
+    title: string;
+    message: string;
+}
+
 export interface IMessage {
     id: number;
     appid: number;
@@ -67,6 +86,7 @@ export interface IMessage {
     date: string;
     image?: string;
     extras?: IMessageExtras;
+    incident?: IIncident;
 }
 
 export interface IMessageExtras {

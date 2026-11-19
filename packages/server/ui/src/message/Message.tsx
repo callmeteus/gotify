@@ -5,12 +5,14 @@ import Typography from '@mui/material/Typography';
 import {ExpandLess, ExpandMore} from '@mui/icons-material';
 import Delete from '@mui/icons-material/Delete';
 import React from 'react';
+import axios from 'axios';
 import TimeAgo from 'react-timeago';
 import Container from '../common/Container';
 import {Markdown} from '../common/Markdown';
 import * as config from '../config';
-import {IMessageExtras} from '../types';
+import {IIncident, IMessageExtras} from '../types';
 import {contentType, RenderMode} from './extras';
+import {nextIncidentStage} from './incident';
 import {TimeAgoFormatter} from '../common/TimeAgoFormatter';
 
 const PREVIEW_LENGTH = 500;
@@ -100,6 +102,7 @@ interface IProps {
     appName: string;
     fDelete: VoidFunction;
     extras?: IMessageExtras;
+    incident?: IIncident;
     expanded: boolean;
     onExpand: (expand: boolean) => void;
 }
@@ -122,6 +125,7 @@ const Message = ({
     priority,
     content,
     extras,
+    incident,
     appName,
     onExpand,
     expanded: initialExpanded,
@@ -152,6 +156,13 @@ const Message = ({
     React.useEffect(() => void onExpand(expanded), [expanded]);
 
     const togglePreviewHeight = () => setExpanded((b) => !b);
+
+    const stage = nextIncidentStage(incident);
+    const confirmStage = () => {
+        if (incident && stage !== null) {
+            void axios.put(`${config.get('url')}incident/${incident.id}/advance`, {stage});
+        }
+    };
 
     const renderContent = () => {
         switch (contentType(extras)) {
@@ -200,6 +211,18 @@ const Message = ({
                         {renderContent()}
                     </Typography>
                 </div>
+                {stage !== null && incident && (
+                    <Button
+                        id={`incident-advance-${incident.id}`}
+                        style={{marginTop: 16}}
+                        onClick={confirmStage}
+                        variant="contained"
+                        color="primary"
+                        size="large"
+                        fullWidth={true}>
+                        {incident.stages[stage].label}
+                    </Button>
+                )}
                 {isOverflowing && (
                     <Button
                         style={{marginTop: 16}}

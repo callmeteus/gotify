@@ -69,6 +69,7 @@ const Messages = observer(() => {
             content={message.message}
             image={message.image}
             extras={message.extras}
+            incident={message.incident}
             priority={message.priority}
         />
     );

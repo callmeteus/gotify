@@ -73,10 +73,21 @@ export class MessagesStore {
     @action
     public publishSingleMessage = (message: IMessage) => {
         if (this.exists(AllMessages)) {
-            this.stateOf(AllMessages).messages.unshift(message);
+            this.upsert(this.stateOf(AllMessages).messages, message);
         }
         if (this.exists(message.appid)) {
-            this.stateOf(message.appid).messages.unshift(message);
+            this.upsert(this.stateOf(message.appid).messages, message);
+        }
+    };
+
+    // Incident updates reuse the message id. Replace in place so the stage
+    // button and text refresh without creating a duplicate card.
+    private upsert = (messages: IObservableArray<IMessage>, message: IMessage) => {
+        const index = messages.findIndex((existing) => existing.id === message.id);
+        if (index >= 0) {
+            messages[index] = message;
+        } else {
+            messages.unshift(message);
         }
     };
 
