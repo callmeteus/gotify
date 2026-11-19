@@ -160,7 +160,7 @@ const Message = ({
     const stage = nextIncidentStage(incident);
     const confirmStage = () => {
         if (incident && stage !== null) {
-            void axios.put(`${config.get('url')}incident/${incident.id}/advance`, {stage});
+            void axios.post(`${config.get('url')}incident/${incident.id}/advance`, {stage});
         }
     };
 
