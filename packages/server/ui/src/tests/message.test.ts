@@ -116,6 +116,8 @@ describe('Messages', () => {
             a.getAttribute('href')
         );
         expect(href).toBe('https://grafana.svs.e7.dev/');
+        const button = await page.$('#messages .message .content a.MuiButton-root');
+        expect(button).not.toBeNull();
         expect(await count(page, '#messages .message .content br')).toBeGreaterThanOrEqual(2);
         await page.click('#messages .message .delete');
         await waitForCount(page, '#messages .message', 0);
