@@ -186,6 +186,39 @@ func (s *AlarmSuite) Test_ringingPastMax_expires() {
 	assert.Nil(s.T(), expired.RingUntil)
 }
 
+func (s *AlarmSuite) Test_resolution_closesActiveIncident() {
+	app := s.enabledApp(1, 7)
+	s.post(app, `{"title":"🔴 1 backup down","message":"firing","priority":8}`)
+	require.NotNil(s.T(), s.notified[0].Incident)
+
+	s.post(app, `{"title":"✅ backup down","message":"resolved","priority":2}`)
+	last := s.notified[len(s.notified)-1]
+	require.NotNil(s.T(), last.Incident)
+	assert.Equal(s.T(), model.IncidentKindClose, last.Incident.Kind)
+	assert.Equal(s.T(), model.IncidentStateClosed, last.Incident.State)
+}
+
+func (s *AlarmSuite) Test_resolution_withOtherAlertName_keepsIncident() {
+	app := s.enabledApp(1, 7)
+	s.post(app, `{"title":"🔴 1 backup down","message":"firing","priority":8}`)
+
+	s.post(app, `{"title":"✅ proxygon 5xx","message":"resolved","priority":2}`)
+	for _, notification := range s.notified {
+		if notification.Incident != nil {
+			assert.NotEqual(s.T(), model.IncidentKindClose, notification.Incident.Kind)
+		}
+	}
+}
+
+func (s *AlarmSuite) Test_resolutionAlertName_fromExtras() {
+	name, ok := resolutionAlertName(&model.MessageExternal{
+		Title:  "Resolved",
+		Extras: map[string]any{"alert::status": "resolved", "alert::name": "backup down"},
+	})
+	assert.True(s.T(), ok)
+	assert.Equal(s.T(), "backup down", name)
+}
+
 func (s *AlarmSuite) enabledApp(userID uint, appID uint) *model.Application {
 	app := s.db.User(userID).NewAppWithToken(appID, "app-token")
 	require.NoError(s.T(), s.alarms.SaveConfig(app.ID, &model.AlarmConfig{

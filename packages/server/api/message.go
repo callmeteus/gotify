@@ -407,7 +407,9 @@ func (a *MessageAPI) createMessage(app *model.Application, message *model.Create
 		return nil, err
 	}
 	created := toExternalMessage(msgInternal)
-	if a.Alarms != nil {
+	if name, resolved := resolutionAlertName(created); resolved {
+		created.Incident = a.Alarms.closeOnResolution(app, created, name)
+	} else if a.Alarms != nil {
 		created.Incident = a.Alarms.OnMessage(app, created)
 	}
 	a.Notifier.Notify(app.UserID, created)
