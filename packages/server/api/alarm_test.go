@@ -196,6 +196,11 @@ func (s *AlarmSuite) Test_resolution_closesActiveIncident() {
 	require.NotNil(s.T(), last.Incident)
 	assert.Equal(s.T(), model.IncidentKindClose, last.Incident.Kind)
 	assert.Equal(s.T(), model.IncidentStateClosed, last.Incident.State)
+	// The resolution must update the original card, not create a new one.
+	count, err := s.db.CountIncidentsByApplication(app.ID)
+	require.NoError(s.T(), err)
+	assert.Equal(s.T(), int64(1), count)
+	assert.Equal(s.T(), last.ID, s.notified[0].Incident.MessageID)
 }
 
 func (s *AlarmSuite) Test_resolution_withOtherAlertName_keepsIncident() {

@@ -17,6 +17,7 @@ type AlarmDatabase interface {
 	SaveApplicationAlarm(alarm *model.ApplicationAlarm) error
 	GetActiveIncident(applicationID uint) (*model.Incident, error)
 	GetIncidentByID(id uint) (*model.Incident, error)
+	GetMessageByID(id uint) (*model.Message, error)
 	CreateIncident(incident *model.Incident) error
 	SaveIncident(incident *model.Incident) error
 	ListActiveIncidentsByUser(userID uint, state string) ([]*model.Incident, error)

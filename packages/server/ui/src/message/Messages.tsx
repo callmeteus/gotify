@@ -26,6 +26,7 @@ const Messages = observer(() => {
     const [isLoadingMore, setLoadingMore] = React.useState(false);
     const {messagesStore, appStore} = useStores();
     const messages = messagesStore.get(appId);
+    const stages = appStore.getItems().find((app) => app.alarm?.enabled)?.alarm?.stages ?? [];
     const hasMore = messagesStore.canLoadMore(appId);
     const name = appStore.getName(appId);
     const hasMessages = messages.length !== 0;
@@ -151,6 +152,7 @@ const Messages = observer(() => {
                 </div>
             }>
             <PresenceControls
+                stages={stages}
                 incident={
                     messages.find(
                         (message) =>

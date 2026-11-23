@@ -36,6 +36,27 @@ func resolutionAlertName(message *model.MessageExternal) (string, bool) {
 	return "", false
 }
 
+// resolutionTarget returns the stored message of the active incident when a
+// resolution belongs to it. Used to update that message in place instead of
+// creating a second card for the same alert.
+func (a *AlarmAPI) resolutionTarget(app *model.Application, alertName string) *model.Message {
+	if a == nil || a.DB == nil || app == nil {
+		return nil
+	}
+	incident, err := a.DB.GetActiveIncident(app.ID)
+	if err != nil || incident == nil {
+		return nil
+	}
+	if alertName != "" && !strings.Contains(incident.Title, alertName) {
+		return nil
+	}
+	message, err := a.DB.GetMessageByID(incident.MessageID)
+	if err != nil {
+		return nil
+	}
+	return message
+}
+
 // closeOnResolution closes the active incident of an application when it
 // belongs to the resolved alert. It returns the close frame to attach to the
 // message, or nil when there is nothing to close.

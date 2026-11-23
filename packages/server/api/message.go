@@ -24,6 +24,7 @@ type MessageDatabase interface {
 	DeleteMessagesByUser(userID uint) error
 	DeleteMessagesByApplication(applicationID uint) error
 	CreateMessage(message *model.Message) error
+	SaveMessage(message *model.Message) error
 }
 
 var timeNow = time.Now
@@ -402,14 +403,34 @@ func (a *MessageAPI) createMessage(app *model.Application, message *model.Create
 		message.Priority = &app.DefaultPriority
 	}
 
+	// A Grafana resolution updates the original alert card instead of adding a
+	// second one, so one firing/resolved cycle stays a single message.
+	if name, resolved := resolutionAlertName(&model.MessageExternal{Title: message.Title, Extras: message.Extras}); resolved &&
+		a.Alarms != nil {
+		if original := a.Alarms.resolutionTarget(app, name); original != nil {
+			original.Title = message.Title
+			original.Message = message.Message
+			original.Extras, _ = json.Marshal(message.Extras)
+			if message.Priority != nil {
+				original.Priority = *message.Priority
+			}
+			original.Date = timeNow()
+			if err := a.DB.SaveMessage(original); err != nil {
+				return nil, err
+			}
+			created := toExternalMessage(original)
+			created.Incident = a.Alarms.closeOnResolution(app, created, name)
+			a.Notifier.Notify(app.UserID, created)
+			return created, nil
+		}
+	}
+
 	msgInternal := toInternalMessage(message)
 	if err := a.DB.CreateMessage(msgInternal); err != nil {
 		return nil, err
 	}
 	created := toExternalMessage(msgInternal)
-	if name, resolved := resolutionAlertName(created); resolved {
-		created.Incident = a.Alarms.closeOnResolution(app, created, name)
-	} else if a.Alarms != nil {
+	if a.Alarms != nil {
 		created.Incident = a.Alarms.OnMessage(app, created)
 	}
 	a.Notifier.Notify(app.UserID, created)

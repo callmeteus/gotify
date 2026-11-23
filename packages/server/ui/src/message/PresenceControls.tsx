@@ -6,17 +6,18 @@ import Typography from '@mui/material/Typography';
 import axios from 'axios';
 import React from 'react';
 import * as config from '../config';
+import {IAlarmStage, IIncident} from '../types';
 import {countdownOf} from './countdown';
-import {IIncident} from '../types';
-
-const OPTIONS = [
-    {label: "I'm up", state: 'at_desk'},
-    {label: "I'm at my computer", state: 'at_desk'},
-    {label: 'Not at PC', state: 'away'},
-] as const;
+import {presenceOptionsFromStages} from './presenceOptions';
 
 /** Manual presence controls and the active alarm countdown, always visible. */
-const PresenceControls = ({incident}: {incident?: IIncident}) => {
+const PresenceControls = ({
+    incident,
+    stages = [],
+}: {
+    incident?: IIncident;
+    stages?: IAlarmStage[];
+}) => {
     const [current, setCurrent] = React.useState<string | null>(null);
     const [now, setNow] = React.useState(Date.now());
 
@@ -50,9 +51,9 @@ const PresenceControls = ({incident}: {incident?: IIncident}) => {
                 Presence {current ? `· ${current}` : ''}
             </Typography>
             <div style={{display: 'flex', gap: 8, flexWrap: 'wrap'}}>
-                {OPTIONS.map((option) => (
+                {presenceOptionsFromStages(stages).map((option, index) => (
                     <Button
-                        key={option.label}
+                        key={`${option.label}-${index}`}
                         size="small"
                         variant={current === option.label ? 'contained' : 'outlined'}
                         onClick={() => publish(option.state, option.label)}>
