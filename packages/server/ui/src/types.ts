@@ -73,6 +73,8 @@ export interface IIncident {
     stages: IAlarmStage[];
     stageDeadlineAt?: string;
     ringUntil?: string;
+    deadlineAt?: string;
+    durationSeconds?: number;
     repeatIntervalSeconds: number;
     title: string;
     message: string;

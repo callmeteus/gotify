@@ -69,16 +69,20 @@ type Incident struct {
 //
 // swagger:model Incident
 type IncidentExternal struct {
-	ID                    uint         `json:"id"`
-	ApplicationID         uint         `json:"appid"`
-	MessageID             uint         `json:"messageId,omitempty"`
-	State                 string       `json:"state"`
-	Kind                  string       `json:"kind"`
-	CurrentStage          int          `json:"currentStage"`
-	Stages                []AlarmStage `json:"stages"`
-	StageDeadlineAt       *time.Time   `json:"stageDeadlineAt,omitempty"`
-	RingUntil             *time.Time   `json:"ringUntil,omitempty"`
-	RepeatIntervalSeconds int          `json:"repeatIntervalSeconds"`
-	Title                 string       `json:"title"`
-	Message               string       `json:"message"`
+	ID              uint         `json:"id"`
+	ApplicationID   uint         `json:"appid"`
+	MessageID       uint         `json:"messageId,omitempty"`
+	State           string       `json:"state"`
+	Kind            string       `json:"kind"`
+	CurrentStage    int          `json:"currentStage"`
+	Stages          []AlarmStage `json:"stages"`
+	StageDeadlineAt *time.Time   `json:"stageDeadlineAt,omitempty"`
+	RingUntil       *time.Time   `json:"ringUntil,omitempty"`
+	// DeadlineAt and DurationSeconds describe the running countdown, ready for
+	// clients to render a progress bar without recomputing alarm internals.
+	DeadlineAt            *time.Time `json:"deadlineAt,omitempty"`
+	DurationSeconds       int        `json:"durationSeconds,omitempty"`
+	RepeatIntervalSeconds int        `json:"repeatIntervalSeconds"`
+	Title                 string     `json:"title"`
+	Message               string     `json:"message"`
 }

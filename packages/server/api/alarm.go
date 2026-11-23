@@ -387,7 +387,7 @@ func (a *AlarmAPI) externalFor(incident *model.Incident, kind string) *model.Inc
 }
 
 func toIncidentExternal(incident *model.Incident, config *model.AlarmConfig, kind string) *model.IncidentExternal {
-	return &model.IncidentExternal{
+	external := &model.IncidentExternal{
 		ID:                    incident.ID,
 		ApplicationID:         incident.ApplicationID,
 		MessageID:             incident.MessageID,
@@ -401,6 +401,19 @@ func toIncidentExternal(incident *model.Incident, config *model.AlarmConfig, kin
 		Title:                 incident.Title,
 		Message:               incident.Body,
 	}
+	// Expose the active countdown: ringing uses maxRing, waiting uses the
+	// advance window of the stage just confirmed.
+	switch incident.State {
+	case model.IncidentStateRinging:
+		external.DeadlineAt = incident.RingUntil
+		external.DurationSeconds = config.MaxRingSeconds
+	case model.IncidentStateWaiting:
+		external.DeadlineAt = incident.StageDeadlineAt
+		if incident.CurrentStage >= 0 && incident.CurrentStage < len(config.Stages) {
+			external.DurationSeconds = config.Stages[incident.CurrentStage].AdvanceWithinSeconds
+		}
+	}
+	return external
 }
 
 func configFromStored(stored *model.ApplicationAlarm) (*model.AlarmConfig, error) {

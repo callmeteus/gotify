@@ -150,7 +150,16 @@ const Messages = observer(() => {
                     </Button>
                 </div>
             }>
-            <PresenceControls />
+            <PresenceControls
+                incident={
+                    messages.find(
+                        (message) =>
+                            message.incident &&
+                            (message.incident.state === 'ringing' ||
+                                message.incident.state === 'waiting')
+                    )?.incident
+                }
+            />
             {!messagesStore.loaded(appId) ? <LoadingSpinner /> : renderMessages()}
 
             {deleteAll && (
