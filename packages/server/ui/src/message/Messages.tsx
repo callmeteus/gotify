@@ -12,6 +12,7 @@ import LoadingSpinner from '../common/LoadingSpinner';
 import {useStores} from '../stores';
 import {Virtuoso} from 'react-virtuoso';
 import {PushMessageDialog} from './PushMessageDialog';
+import PresenceControls from './PresenceControls';
 import {enqueueSnackbar} from 'notistack';
 
 const UndoAutoHideMs = 5000;
@@ -149,6 +150,7 @@ const Messages = observer(() => {
                     </Button>
                 </div>
             }>
+            <PresenceControls />
             {!messagesStore.loaded(appId) ? <LoadingSpinner /> : renderMessages()}
 
             {deleteAll && (
