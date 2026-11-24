@@ -7,7 +7,7 @@ internal object Extras {
 
     fun useMarkdown(extras: Map<String, Any>?): Boolean {
         if (extras == null) {
-            return false
+            return true
         }
 
         val display: Any? = extras["client::display"]

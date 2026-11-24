@@ -157,4 +157,13 @@
     <string name="presence_geofences_summary">lat,lon,radiusInMeters separated by semicolons.</string>
     <string name="presence_debounce_title">Away delay (seconds)</string>
     <string name="presence_ttl_title">Report validity (seconds)</string>
+    <string name="setting_language">Language</string>
+    <string name="setting_language_system">Follow system</string>
+    <string name="setting_language_pt">Português (Brasil)</string>
+    <string name="setting_language_en">English (US)</string>
+    <string name="setting_key_language">language</string>
+    <string name="settings_visual">Dashboard</string>
+    <string name="dashboard_greeting">All caught up</string>
+    <string name="dashboard_subtitle">Your alerts appear here</string>
+    <string name="learn_send_messages">Learn how to send messages</string>
 </resources>

@@ -4,9 +4,25 @@
     xmlns:tools="http://schemas.android.com/tools"
     android:layout_width="match_parent"
     android:layout_height="wrap_content"
-    android:orientation="vertical"
-    android:padding="10dp"
-    android:background="?android:colorBackground">
+    android:layout_marginStart="12dp"
+    android:layout_marginEnd="12dp"
+    android:layout_marginTop="4dp"
+    android:layout_marginBottom="4dp"
+    android:background="@drawable/message_card_background"
+    android:elevation="1dp">
+
+    <com.google.android.material.textview.MaterialTextView
+        android:id="@+id/message_title"
+        android:layout_width="0dp"
+        android:layout_height="wrap_content"
+        android:layout_marginStart="8dp"
+        android:layout_marginEnd="8dp"
+        tools:text="A Notification Title"
+        android:textSize="15sp"
+        android:textStyle="bold"
+        app:layout_constraintEnd_toStartOf="@+id/message_date"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintTop_toTopOf="parent" />
 
     <com.google.android.material.textview.MaterialTextView
         android:id="@+id/message_date"
@@ -17,54 +33,38 @@
         app:layout_constraintEnd_toStartOf="@+id/message_delete"
         app:layout_constraintTop_toTopOf="parent" />
 
-    <com.google.android.material.textview.MaterialTextView
-        android:id="@+id/message_title"
-        android:layout_width="0dp"
-        android:layout_height="wrap_content"
-        android:layout_marginStart="8dp"
-        android:layout_marginEnd="8dp"
-        tools:text="A Notification Title"
-        android:textSize="16sp"
-        android:textStyle="bold"
-        app:layout_constraintEnd_toStartOf="@+id/message_date"
-        app:layout_constraintStart_toEndOf="@id/message_image"
-        app:layout_constraintTop_toTopOf="parent" />
-
-    <ImageView
-        android:id="@+id/message_image"
-        android:layout_width="40dp"
-        android:layout_height="40dp"
-        android:layout_marginStart="0dp"
-        android:layout_marginTop="0dp"
-        tools:src="@drawable/gotify"
-        android:contentDescription="@string/message_image_desc"
-        app:layout_constraintStart_toStartOf="parent"
-        app:layout_constraintTop_toTopOf="parent"
-        app:layout_constraintBottom_toBottomOf="parent" />
-
-    <com.google.android.material.textview.MaterialTextView
-        android:id="@+id/message_text"
-        android:layout_width="0dp"
-        android:layout_height="wrap_content"
-        android:layout_marginStart="8dp"
-        android:layout_marginTop="3dp"
-        android:layout_marginEnd="8dp"
-        android:textColorLink="@color/hyperLink"
-        android:textIsSelectable="true"
-        tools:text="The message text."
-        app:layout_constraintEnd_toEndOf="parent"
-        app:layout_constraintStart_toEndOf="@+id/message_image"
-        app:layout_constraintTop_toBottomOf="@+id/message_title" />
-
     <ImageButton
         android:id="@+id/message_delete"
         android:layout_width="30dp"
         android:layout_height="30dp"
         android:background="@null"
         android:contentDescription="@string/delete_message"
-        app:layout_constraintBottom_toBottomOf="@+id/message_date"
         app:layout_constraintEnd_toEndOf="parent"
         app:layout_constraintTop_toTopOf="parent"
         app:srcCompat="@drawable/ic_delete" />
+
+    <com.google.android.material.textview.MaterialTextView
+        android:id="@+id/message_text"
+        android:layout_width="0dp"
+        android:layout_height="wrap_content"
+        android:layout_marginStart="8dp"
+        android:layout_marginEnd="8dp"
+        android:layout_marginBottom="4dp"
+        android:textColorLink="@color/hyperLink"
+        android:textIsSelectable="true"
+        tools:text="The message text."
+        app:layout_constraintEnd_toEndOf="parent"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintTop_toBottomOf="@+id/message_title" />
+
+    <ImageView
+        android:id="@+id/message_image"
+        android:layout_width="40dp"
+        android:layout_height="40dp"
+        android:layout_marginStart="8dp"
+        android:contentDescription="@string/message_image_desc"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintTop_toBottomOf="@+id/message_text"
+        tools:srcCompat="@drawable/gotify" />
 
 </androidx.constraintlayout.widget.ConstraintLayout>

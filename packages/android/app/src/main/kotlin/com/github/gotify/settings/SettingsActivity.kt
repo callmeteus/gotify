@@ -21,6 +21,7 @@ import androidx.preference.PreferenceFragmentCompat
 import androidx.preference.PreferenceManager
 import androidx.preference.SwitchPreferenceCompat
 import com.github.gotify.R
+import com.github.gotify.settings.LocaleHelper
 import com.github.gotify.Utils
 import com.github.gotify.databinding.SettingsActivityBinding
 import com.github.gotify.service.WebSocketService
@@ -65,6 +66,10 @@ internal class SettingsActivity :
                     this,
                     sharedPreferences.getString(key, getString(R.string.theme_default))!!
                 )
+            }
+            getString(R.string.setting_key_language) -> {
+                LocaleHelper.apply(this)
+                recreate()
             }
             getString(R.string.setting_key_presence_enabled) -> {
                 if (sharedPreferences.getBoolean(key, false)) {

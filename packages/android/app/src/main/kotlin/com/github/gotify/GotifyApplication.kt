@@ -7,6 +7,7 @@ import androidx.preference.PreferenceManager
 import com.github.gotify.api.CertUtils
 import com.github.gotify.log.LoggerHelper
 import com.github.gotify.log.UncaughtExceptionHandler
+import com.github.gotify.settings.LocaleHelper
 import com.github.gotify.settings.ThemeHelper
 import java.io.File
 import java.io.FileOutputStream
@@ -15,6 +16,7 @@ import org.tinylog.kotlin.Logger
 
 class GotifyApplication : Application() {
     override fun onCreate() {
+        LocaleHelper.apply(this)
         LoggerHelper.init(this)
         UncaughtExceptionHandler.registerCurrentThread()
         Logger.info("${javaClass.simpleName}: onCreate")

@@ -38,4 +38,14 @@
     <bool name="notification_channels">false</bool>
     <bool name="exclude_from_recent">false</bool>
     <bool name="prompt_onreceive_intent">true</bool>
+    <string-array name="language_entries">
+        <item>@string/setting_language_system</item>
+        <item>@string/setting_language_pt</item>
+        <item>@string/setting_language_en</item>
+    </string-array>
+    <string-array name="language_values">
+        <item>system</item>
+        <item>pt-BR</item>
+        <item>en-US</item>
+    </string-array>
 </resources>
